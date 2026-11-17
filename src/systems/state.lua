@@ -1,5 +1,6 @@
 local Units = require("src.data.units")
 local CORES = require("src.data.cores")
+local Items = require("src.data.items")
 local Upgrades = require("src.data.upgrades")
 local Waves = require("src.data.waves")
 local SlotMod = require("src.systems.slot_machine")
@@ -7,12 +8,12 @@ local Battle = require("src.systems.battle")
 local Color = require("src.utils.color")
 
 local M = {}
-M.MAX_PITY = 4
+M.MAX_PITY = 5
 
 M.DIFFICULTIES = {
-  normal   = { id = "normal",   enemyScale = 1.0,  startGold = 42, hearts = 10 },
-  hard     = { id = "hard",     enemyScale = 1.25, startGold = 46, hearts = 9 },
-  judgment = { id = "judgment", enemyScale = 1.55, startGold = 52, hearts = 8 },
+  normal   = { id = "normal",   enemyScale = 1.0,  startGold = 24, hearts = 10 },
+  hard     = { id = "hard",     enemyScale = 1.3,  startGold = 22, hearts = 9 },
+  judgment = { id = "judgment", enemyScale = 1.6,  startGold = 20, hearts = 8 },
 }
 
 function M.createUnitInstance(baseId, tierOverride, rarityOverride, prismBonus)
@@ -63,6 +64,8 @@ function M.createUnitInstance(baseId, tierOverride, rarityOverride, prismBonus)
     sellGold = tpl.sellGold + rarity.xpBonus * 3,
     xpValue = tpl.xpValue + rarity.xpBonus,
     traits = tpl.traits,
+    activeSkill = tpl.activeSkill,
+    skillCooldown = tpl.activeSkill and (tpl.activeSkill.cooldown * 0.5) or 0,
     branches = tpl.branches,
     kills = 0,
     attackCount = 0,
@@ -101,17 +104,21 @@ function GameState.new(audio)
     fastForward = false,
     paused = false,
 
-    gold = 42,
+    gold = 24,
+    crystals = 3,
     hearts = 10,
     maxHearts = 10,
-    nudges = 2,
-    nudgesPerWave = 2,
+    nudges = 1,
+    nudgesPerWave = 1,
     maxRoster = 8,
+    maxItems = 8,
     prismBonus = 0,
     pityCharge = 0,
     spinMatchedThisTurn = false,
+    spinDiscountNext = 0,
+    gateNetCharges = 0,
 
-    baseSpinCost = 5,
+    baseSpinCost = 6,
     spinCostStep = 3,
     spinsThisWave = 0,
     freeFirstSpin = false,
@@ -128,12 +135,15 @@ function GameState.new(audio)
     floatingTexts = {},
 
     cores = {},
+    items = {},
     upgradeLevels = {},
     synergies = { counts = {} },
     coreModal = nil,
     classModal = nil,
     shopModal = false,
     guideModal = false,
+    codexFamily = "all",
+    codexUnitId = "warrior",
 
     selectedUnitId = nil,
     feedMode = false,
@@ -159,6 +169,13 @@ function GameState:hasCore(coreId)
   return false
 end
 
+function GameState:hasItem(itemId)
+  for _, it in ipairs(self.items) do
+    if it.id == itemId then return true end
+  end
+  return false
+end
+
 function GameState:refreshSynergies()
   self.synergies = Battle.computeSynergies(self.roster)
 end
@@ -178,7 +195,7 @@ function GameState:currentSpinCost()
   if self.freeFirstSpin and self.spinsThisWave == 0 then
     return 0
   end
-  return self.baseSpinCost + self.spinsThisWave * self.spinCostStep
+  return math.max(0, self.baseSpinCost + self.spinsThisWave * self.spinCostStep - (self.spinDiscountNext or 0))
 end
 
 function GameState:setDifficulty(diffId)
@@ -194,15 +211,19 @@ function GameState:startRun()
   self.waveActive = false
   self.paused = false
   self.gold = diff.startGold
+  self.crystals = 3
   self.hearts = diff.hearts
   self.maxHearts = diff.hearts
-  self.nudgesPerWave = 2
-  self.nudges = 2
+  self.nudgesPerWave = 1
+  self.nudges = 1
   self.maxRoster = 8
+  self.maxItems = 8
   self.prismBonus = 0
   self.pityCharge = 0
   self.spinMatchedThisTurn = false
-  self.baseSpinCost = 5
+  self.spinDiscountNext = 0
+  self.gateNetCharges = 0
+  self.baseSpinCost = 6
   self.spinCostStep = 3
   self.spinsThisWave = 0
   self.freeFirstSpin = false
@@ -211,7 +232,6 @@ function GameState:startRun()
 
   self.roster = {
     M.createUnitInstance("warrior", 1, Units.RARITIES.normal, 0),
-    M.createUnitInstance("ranger", 1, Units.RARITIES.normal, 0),
   }
   Battle.assignFormationPositions(self.roster)
   self:refreshSynergies()
@@ -223,6 +243,7 @@ function GameState:startRun()
   self.vfx = {}
   self.floatingTexts = {}
   self.cores = {}
+  self.items = {}
   self.upgradeLevels = {}
   self.coreModal = nil
   self.classModal = nil
@@ -255,6 +276,7 @@ function GameState:spin()
   local isPity = self:isPitySpinReady()
   local cost = self:currentSpinCost()
   self.gold = self.gold - cost
+  self.spinDiscountNext = 0
   if not isPity then
     self.spinsThisWave = self.spinsThisWave + 1
   else
@@ -274,6 +296,13 @@ function GameState:nudgeReel(col, dir)
   if self.slot:nudge(col, dir) then
     self.nudges = self.nudges - 1
     self.audio:playNudge()
+    if self:hasItem("greedy_pearl") then
+      self.gold = self.gold + 8
+      self.floatingTexts[#self.floatingTexts + 1] = {
+        x = 180, y = 120, vy = -24, text = "+8g (Pearl)",
+        color = Color.hex("#facc15"), life = 0.8, maxLife = 0.8, scale = 1.0,
+      }
+    end
     self:applySlotMatches(true)
     return true
   end
@@ -285,6 +314,9 @@ function GameState:applySlotMatches(fromNudge)
   if #matches == 0 then
     if not fromNudge and not self.spinMatchedThisTurn then
       self.pityCharge = math.min(M.MAX_PITY, self.pityCharge + 1)
+      if self:hasItem("rewind_clock") then
+        self.spinDiscountNext = 3
+      end
     end
     return {}
   end
@@ -311,7 +343,7 @@ function GameState:applySlotMatches(fromNudge)
       for _ = 1, mult do
         self:summonUnit(m.symbol.unitId)
       end
-      local wildBonus = (m.crownCount or 0) * 6 + (m.jesterCount or 0) * 4
+      local wildBonus = (m.crownCount or 0) * 3 + (m.jesterCount or 0) * 2
       if wildBonus > 0 then
         self.gold = self.gold + wildBonus
       end
@@ -325,6 +357,16 @@ function GameState:applySlotMatches(fromNudge)
         color = Color.hex("#f6c945"), life = 1.0, maxLife = 1.0, scale = 1.25,
       }
     end
+  end
+
+  if #matches >= 2 then
+    local comboBonus = (#matches - 1) * 3
+    self.gold = self.gold + comboBonus
+    self.floatingTexts[#self.floatingTexts + 1] = {
+      x = 185, y = 215, vy = -26,
+      text = "COMBO x" .. tostring(#matches) .. "! +" .. tostring(comboBonus) .. "g",
+      color = Color.hex("#fde047"), life = 1.15, maxLife = 1.15, scale = 1.2,
+    }
   end
 
   if triggeredJackpot then
@@ -387,9 +429,10 @@ function GameState:summonUnit(baseId)
 end
 
 function GameState:setUnitPosition(unitId, x, y)
+  if self.waveActive then return false end
   for _, u in ipairs(self.roster) do
     if u.id == unitId then
-      local clampedX = math.max(Battle.ARENA.castleX + 34, math.min(Battle.ARENA.rightBound - 80, x))
+      local clampedX = math.max(Battle.ARENA.castleX + 34, math.min(Battle.ARENA.deployMaxX, x))
       local clampedY = math.max(Battle.ARENA.minY + 10, math.min(Battle.ARENA.maxY - 10, y))
       u.homeX = clampedX
       u.homeY = clampedY
@@ -582,6 +625,54 @@ function GameState:buyUpgrade(upgId)
   return true
 end
 
+function GameState:buyItem(itemId)
+  if #self.items >= self.maxItems or self:hasItem(itemId) then return false end
+  local tpl = Items.ITEMS[itemId]
+  if not tpl or self.crystals < tpl.cost then return false end
+  self.crystals = self.crystals - tpl.cost
+  local inst = {
+    id = tpl.id,
+    name = tpl.name,
+    desc = tpl.desc,
+    color = tpl.color,
+    badge = tpl.badge,
+    kind = tpl.kind,
+    usesPerWave = tpl.usesPerWave or 0,
+    usesLeft = tpl.usesPerWave or 0,
+  }
+  self.items[#self.items + 1] = inst
+  if tpl.onAcquire then tpl.onAcquire(self) end
+  self.audio:playEvolve()
+  return true
+end
+
+function GameState:useItem(index)
+  local item = self.items[index]
+  if not item or item.usesLeft <= 0 then return false end
+  if item.id == "trickster_cube" then
+    if self.slot.spinning then return false end
+    if self.slot:rotateTopLeft2x2() then
+      item.usesLeft = item.usesLeft - 1
+      self.audio:playNudge()
+      self:applySlotMatches(true)
+      return true
+    end
+  elseif item.id == "frost_flask" then
+    if self.phase ~= "battle" or #self.enemies == 0 then return false end
+    item.usesLeft = item.usesLeft - 1
+    self.audio:playMagic()
+    for _, foe in ipairs(self.enemies) do
+      Battle.applyChill(foe, 4.0)
+    end
+    self.floatingTexts[#self.floatingTexts + 1] = {
+      x = 810, y = 260, vy = -24, text = "FROST FLASK!",
+      color = Color.hex("#22d3ee"), life = 1.0, maxLife = 1.0, scale = 1.2,
+    }
+    return true
+  end
+  return false
+end
+
 function GameState:openCoreDraft()
   local owned = {}
   for _, c in ipairs(self.cores) do owned[c.id] = true end
@@ -633,7 +724,8 @@ function GameState:startWave()
   Battle.assignFormationPositions(self.roster)
   self:refreshSynergies()
 
-  -- Grant battle shields to Paladin / Phalanx Banner frontliners
+  -- Grant battle shields & Gate Net charges
+  self.gateNetCharges = self:hasItem("gate_net") and 2 or 0
   local hasPhalanx = self:hasCore("phalanx_banner")
   for _, u in ipairs(self.roster) do
     local shieldAmt = 0
@@ -668,10 +760,17 @@ function GameState:completeWave()
     return
   end
 
-  local waveBonus = 14 + self.wave * 2 + (self:hasCore("castle_mason") and 12 or 0)
+  local chaliceBonus = self:hasItem("golden_chalice") and 15 or 0
+  local waveBonus = 7 + math.floor(self.wave * 1.5) + (self:hasCore("castle_mason") and 12 or 0) + chaliceBonus
   self.gold = self.gold + waveBonus
+  local crystalGain = ((self.wave % 5 == 0) and 2 or 1) + (self:hasItem("golden_chalice") and 1 or 0)
+  self.crystals = self.crystals + crystalGain
   self.waveClearGold = waveBonus
   self.waveClearTimer = 2.2
+
+  for _, it in ipairs(self.items) do
+    it.usesLeft = it.usesPerWave or 0
+  end
 
   local diff = M.DIFFICULTIES[self.difficulty] or M.DIFFICULTIES.normal
   local clearedWave = self.wave

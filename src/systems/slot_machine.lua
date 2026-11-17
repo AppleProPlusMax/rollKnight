@@ -79,6 +79,7 @@ function SlotMachine.new(weights)
       Symbols.buildReelStrip(weights),
     },
     offsets = { 1, 1, 1 },
+    overrideGrid = nil,
     spinning = false,
     forceCenterWild = false,
     leverPull = 0,
@@ -107,10 +108,24 @@ function SlotMachine:rebuild(weights)
 end
 
 function SlotMachine:getSymbolAt(col, relOffset)
+  if self.overrideGrid and relOffset >= 0 and relOffset <= 2 then
+    return self.overrideGrid[col][relOffset + 1]
+  end
   local strip = self.strips[col]
   local len = #strip
   local idx = ((self.offsets[col] + relOffset - 1) % len) + 1
   return strip[idx]
+end
+
+function SlotMachine:rotateTopLeft2x2()
+  if self.spinning then return false end
+  local g = self:getGrid()
+  local a, b = g[1][1], g[2][1]
+  local c, d = g[1][2], g[2][2]
+  g[1][1], g[2][1] = c, a
+  g[1][2], g[2][2] = d, b
+  self.overrideGrid = g
+  return true
 end
 
 function SlotMachine:getGrid()
@@ -142,6 +157,7 @@ end
 function SlotMachine:startSpin(opts)
   opts = opts or {}
   self.spinning = true
+  self.overrideGrid = nil
   self.forceCenterWild = opts.forceCenterWild or false
   self.leverPull = 1.0
   self.claimedLines = {}
@@ -192,6 +208,9 @@ function SlotMachine:update(dt)
           self.offsets[2] = wildOff or math.random(1, #self.strips[2])
         else
           self.offsets[col] = math.random(1, #self.strips[col])
+          if col == 3 and not self.forceCenterWild and #M.evaluateGrid(self:getGrid()) > 0 and math.random() < 0.45 then
+            self.offsets[3] = (self.offsets[3] % #self.strips[3]) + 1
+          end
         end
         stoppedCols[#stoppedCols + 1] = col
       end
@@ -211,6 +230,7 @@ function SlotMachine:nudge(col, dir)
   if self.spinning or col < 1 or col > 3 then
     return false
   end
+  self.overrideGrid = nil
   local len = #self.strips[col]
   self.offsets[col] = ((self.offsets[col] - 1 + dir) % len) + 1
   self.reelBounce[col] = 0.55

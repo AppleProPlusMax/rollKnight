@@ -75,6 +75,12 @@ local function dispatchAction(hit)
     -- Swallow click on modal body/backdrop
   elseif id == "buy_upgrade" then
     state:buyUpgrade(hit.payload.upgId)
+  elseif id == "buy_item" then
+    state:buyItem(hit.payload.itemId)
+  elseif id == "use_item" then
+    state:useItem(hit.payload.index)
+  elseif id == "pick_codex_unit" then
+    state.codexUnitId = hit.payload.unitId
   elseif id == "toggle_speed" then
     state.fastForward = not state.fastForward
   elseif id == "toggle_pause" then

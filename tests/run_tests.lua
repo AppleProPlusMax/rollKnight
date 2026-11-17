@@ -80,7 +80,7 @@ end)
 addTest("GameState unit absorption evolves to 2-star and opens classModal at 3-star", function()
   local state = StateMod.GameState.new(mockAudio)
   state:startRun()
-  assert(#state.roster == 2)
+  assert(#state.roster == 1)
 
   local mainUnit = state.roster[1]
   local w1 = state:summonUnit("warrior")
@@ -106,6 +106,8 @@ addTest("GameState battle simulation clears wave 1 and opens coreModal", functio
   local state = StateMod.GameState.new(mockAudio)
   state:startRun()
   state:summonUnit("champion")
+  state:summonUnit("champion")
+  state:summonUnit("mage")
   state:startWave()
   assert(state.phase == "battle")
   assert(state.waveActive == true)
@@ -160,17 +162,23 @@ addTest("jester wildcards, upgrade shop, and custom repositioning work", functio
   assert(state:buyUpgrade("army_cap") == true)
   assert(state.maxRoster == prevCap + 1)
 
-  -- Drag-reposition updates homeX/homeY
+  -- Drag-reposition updates homeX/homeY and enforces Left-Half-Only pre-battle zone
   local u = state.roster[1]
-  assert(state:setUnitPosition(u.id, 620, 260) == true)
-  assert(u.homeX == 620 and u.homeY == 260 and u.customPositioned == true)
+  assert(u.homeX <= Battle.ARENA.deployMaxX)
+  assert(state:setUnitPosition(u.id, 620, 360) == true)
+  assert(u.homeX == 620 and u.homeY == 360 and u.customPositioned == true)
+  assert(state:setUnitPosition(u.id, 1080, 360) == true)
+  assert(u.homeX == Battle.ARENA.deployMaxX)
+  state.waveActive = true
+  assert(state:setUnitPosition(u.id, 550, 360) == false)
+  state.waveActive = false
 end)
 
 addTest("pity meter grants free wild spin, 3-star paragon absorb empowers, and burn/chill apply", function()
   local state = StateMod.GameState.new(mockAudio)
   state:setDifficulty("judgment")
   state:startRun()
-  assert(state.hearts == 8 and state.gold == 52)
+  assert(state.hearts == 8 and state.gold == 20)
 
   -- Pity meter at MAX_PITY makes spin free and places a wild in center cell (2,2)
   state.pityCharge = StateMod.MAX_PITY
@@ -229,6 +237,56 @@ addTest("frontline units intercept enemies closer to the castle over distant ene
 
   Battle.updateBattle(state, 0.05)
   assert(warrior.x < 850, "Warrior should turn left to intercept breaching goblin")
+end)
+
+addTest("crystals, items tray, Trickster's Cube 2x2 rotation, Greedy Pearl, and Gate Net work", function()
+  local state = StateMod.GameState.new(mockAudio)
+  state:startRun()
+  assert(state.crystals == 3)
+
+  -- Buy Trickster's Cube (3 crystals) and rotate top-left 2x2 clockwise
+  assert(state:buyItem("trickster_cube") == true)
+  assert(state.crystals == 0 and #state.items == 1)
+  state.slot.overrideGrid = {
+    { "sword", "shield", "skull" },
+    { "bow", "crown", "potion" },
+    { "orb", "horn", "jester" },
+  }
+  assert(state:useItem(1) == true)
+  local g = state.slot:getGrid()
+  assert(g[1][1] == "shield" and g[2][1] == "sword" and g[2][2] == "bow" and g[1][2] == "crown")
+  assert(state.items[1].usesLeft == 0)
+  assert(state:useItem(1) == false)
+
+  -- Greedy Pearl grants +8g on nudge
+  state.crystals = 5
+  assert(state:buyItem("greedy_pearl") == true)
+  local goldBefore = state.gold
+  state.nudges = 1
+  assert(state:nudgeReel(1, 1) == true)
+  assert(state.gold >= goldBefore + 8)
+  local sawPearl = false
+  for _, ft in ipairs(state.floatingTexts) do
+    if ft.text == "+8g (Pearl)" then sawPearl = true break end
+  end
+  assert(sawPearl == true)
+
+  -- Gate Net automatically roots enemies near the castle in battle
+  assert(state:buyItem("gate_net") == true)
+  state.roster = {}
+  assert(state:startWave() == true)
+  assert(state.gateNetCharges == 2)
+  local foe = Battle.spawnEnemyFromPlan({ type = "goblin", delay = 0, scale = 1 })
+  foe.x = Battle.ARENA.castleX + 90
+  foe.y = 340
+  state.enemies = { foe }
+  state.wavePlan = { wave = 1, spawns = {} }
+  Battle.updateBattle(state, 0.1)
+  assert((foe.rootTimer or 0) > 0)
+  assert(state.gateNetCharges == 1)
+  local xRooted = foe.x
+  Battle.updateBattle(state, 0.5)
+  assert(foe.x == xRooted)
 end)
 
 local function runAll()

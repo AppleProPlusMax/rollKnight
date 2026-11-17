@@ -8,7 +8,7 @@ M.SYMBOLS = {
     name = { zh = "盾卫", en = "Warrior" },
     unitId = "warrior",
     color = Color.hex("#5b9bd5"),
-    weight = 22,
+    weight = 18,
     payoutGold = 0,
   },
   bow = {
@@ -16,7 +16,7 @@ M.SYMBOLS = {
     name = { zh = "游侠", en = "Ranger" },
     unitId = "ranger",
     color = Color.hex("#6ec472"),
-    weight = 20,
+    weight = 18,
     payoutGold = 0,
   },
   staff = {
@@ -24,7 +24,7 @@ M.SYMBOLS = {
     name = { zh = "法师", en = "Mage" },
     unitId = "mage",
     color = Color.hex("#b07fe8"),
-    weight = 17,
+    weight = 16,
     payoutGold = 0,
   },
   horse = {
@@ -40,7 +40,7 @@ M.SYMBOLS = {
     name = { zh = "死灵", en = "Necro" },
     unitId = "necro",
     color = Color.hex("#57d1c9"),
-    weight = 12,
+    weight = 14,
     payoutGold = 0,
   },
   coin = {
@@ -48,16 +48,16 @@ M.SYMBOLS = {
     name = { zh = "金币", en = "Gold" },
     unitId = nil,
     color = Color.hex("#f6c945"),
-    weight = 16,
-    payoutGold = 24,
+    weight = 14,
+    payoutGold = 14,
   },
   jester = {
     id = "jester",
     name = { zh = "弄臣", en = "Jester" },
     unitId = "jester",
     color = Color.hex("#ff4d6d"),
-    weight = 7,
-    payoutGold = 8,
+    weight = 3,
+    payoutGold = 5,
     isWild = true,
   },
   crown = {
@@ -65,8 +65,8 @@ M.SYMBOLS = {
     name = { zh = "头奖", en = "Jackpot" },
     unitId = "champion",
     color = Color.hex("#ffdf6b"),
-    weight = 6,
-    payoutGold = 18,
+    weight = 2,
+    payoutGold = 14,
     isJackpot = true,
     isWild = true,
   },
@@ -117,6 +117,18 @@ function M.buildReelStrip(weightsOverride)
     shuffle(sub)
     for _, sym in ipairs(sub) do
       pool[#pool + 1] = sym
+    end
+  end
+  for _ = 1, 2 do
+    for i = 2, #pool do
+      if pool[i] == pool[i - 1] then
+        for j = i + 1, #pool do
+          if pool[j] ~= pool[i - 1] and pool[j] ~= pool[(i % #pool) + 1] then
+            pool[i], pool[j] = pool[j], pool[i]
+            break
+          end
+        end
+      end
     end
   end
   return pool

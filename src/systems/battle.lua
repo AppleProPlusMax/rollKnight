@@ -4,15 +4,16 @@ local Color = require("src.utils.color")
 local M = {}
 
 M.ARENA = {
-  x = 396,
-  y = 74,
-  w = 866,
-  h = 556,
-  castleX = 432,
-  spawnX = 1236,
-  rightBound = 1240,
-  minY = 124,
-  maxY = 594,
+  x = 408,
+  y = 78,
+  w = 804,
+  h = 468,
+  castleX = 464,
+  deployMaxX = 804,
+  spawnX = 1184,
+  rightBound = 1188,
+  minY = 286,
+  maxY = 524,
 }
 
 local nextEntityId = 1
@@ -76,8 +77,9 @@ function M.spawnEnemyFromPlan(entry)
     name = tpl.name,
     isBoss = tpl.isBoss or false,
     targetsBackline = tpl.targetsBackline or false,
-    x = M.ARENA.rightBound - math.random() * 14,
+    x = M.ARENA.rightBound - 16 - math.random() * 24,
     y = y,
+    entryTimer = 0.9,
     hp = maxHp,
     maxHp = maxHp,
     atk = atk,
@@ -97,6 +99,7 @@ function M.spawnEnemyFromPlan(entry)
     burnTick = 0,
     burnAttacker = nil,
     chillTimer = 0,
+    rootTimer = 0,
   }
 end
 
@@ -149,10 +152,12 @@ function M.assignFormationPositions(roster)
     for i, u in ipairs(list) do
       if not u.customPositioned then
         local frac = (n == 1) and 0.5 or ((i - 0.5) / n)
-        local laneX = M.ARENA.castleX + 46 + (u.laneX or 0.35) * (M.ARENA.w - 170)
-        local jitterX = (i % 2 == 1) and -12 or 12
+        local leftStart = M.ARENA.castleX + 42
+        local leftSpan = (M.ARENA.deployMaxX - 18) - leftStart
+        local laneX = leftStart + (u.laneX or 0.35) * leftSpan
+        local jitterX = (i % 2 == 1) and -10 or 10
         local homeY = M.ARENA.minY + 18 + frac * (M.ARENA.maxY - M.ARENA.minY - 36)
-        u.homeX = math.max(M.ARENA.castleX + 36, math.min(M.ARENA.spawnX - 180, laneX + jitterX))
+        u.homeX = math.max(M.ARENA.castleX + 36, math.min(M.ARENA.deployMaxX - 16, laneX + jitterX))
         u.homeY = homeY
         if not u.inBattlePosInitialized then
           u.x = u.homeX
@@ -257,9 +262,9 @@ local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback, sy
   enemy.hitFlash = 0.14
 
   knockback = knockback or 0
-  if knockback > 0 then
+  if knockback > 0 and enemy.x <= (M.ARENA.rightBound - 95) then
     local kb = enemy.isBoss and (knockback * 0.25) or knockback
-    enemy.x = math.min(M.ARENA.rightBound, enemy.x + kb)
+    enemy.x = math.min(M.ARENA.rightBound - 95, enemy.x + kb)
   end
 
   if not opts.silentText then
@@ -484,6 +489,65 @@ local function performAllyAttack(state, unit, target, synergies)
   end
 end
 
+local function triggerActiveSkill(state, unit, target, synergies)
+  if not unit.activeSkill then return end
+  local sk = unit.activeSkill
+  unit.skillCooldown = sk.cooldown or 4.0
+  local dmg = unit.atk * 1.5
+  local skName = sk.name.zh
+
+  if unit.baseId == "warrior" or unit.baseId == "champion" then
+    state.audio:playHit()
+    for _, foe in ipairs(state.enemies) do
+      if foe.hp > 0 and dist(foe, target) <= 68 then
+        damageEnemy(state, foe, dmg, unit, true, 32, synergies)
+      end
+    end
+    spawnVfx(state, { kind = "ring", x = target.x, y = target.y, color = unit.accent, radius = 58, life = 0.25, maxLife = 0.25 })
+  elseif unit.baseId == "ranger" then
+    state.audio:playBow()
+    local dx, dy = target.x - unit.x, target.y - unit.y
+    local baseAng = math.atan2(dy, dx)
+    for _, off in ipairs({ -0.1, 0.1 }) do
+      local ang = baseAng + off
+      state.projectiles[#state.projectiles + 1] = {
+        fromEnemy = false, attacker = unit, kind = "arrow",
+        x = unit.x + 10, y = unit.y, vx = math.cos(ang) * 520, vy = math.sin(ang) * 520,
+        angle = ang, damage = unit.atk * 1.15, isCrit = true, splash = 0, chainTargets = 0,
+        pierceLeft = 2, hitIds = {}, color = Color.hex("#86efac"), radius = 5, life = 1.8,
+      }
+    end
+  elseif unit.baseId == "mage" then
+    state.audio:playMagic()
+    for _, foe in ipairs(state.enemies) do
+      if foe.hp > 0 and dist(foe, target) <= 95 then
+        damageEnemy(state, foe, dmg * 1.1, unit, true, 0, synergies)
+        M.applyChill(foe, 2.5)
+      end
+    end
+    spawnVfx(state, { kind = "ring", x = target.x, y = target.y, color = Color.hex("#c084fc"), radius = 92, life = 0.28, maxLife = 0.28 })
+  elseif unit.baseId == "cavalry" then
+    state.audio:playHit()
+    for _, foe in ipairs(state.enemies) do
+      if foe.hp > 0 and dist(foe, target) <= 78 then
+        damageEnemy(state, foe, dmg, unit, true, 38, synergies)
+      end
+    end
+    spawnVfx(state, { kind = "slash", x = target.x, y = target.y, color = Color.hex("#fde047"), life = 0.24, maxLife = 0.24, radius = 38 })
+  elseif unit.baseId == "necro" then
+    state.audio:playMagic()
+    damageEnemy(state, target, dmg, unit, true, 0, synergies)
+    unit.hp = math.min(unit.maxHp, unit.hp + 25)
+    spawnVfx(state, { kind = "beam", x1 = unit.x, y1 = unit.y, x2 = target.x, y2 = target.y, color = Color.hex("#5eead4"), life = 0.22, maxLife = 0.22 })
+  elseif unit.baseId == "jester" then
+    state.audio:playCoin()
+    state.gold = state.gold + 2
+    damageEnemy(state, target, dmg * 1.2, unit, true, 12, synergies)
+  end
+
+  addFloatingText(state, unit.x, unit.y - 34, skName .. "!", unit.accent, 0.95)
+end
+
 function M.updateBattle(state, dt)
   local plan = state.wavePlan
   if plan then
@@ -516,11 +580,13 @@ function M.updateBattle(state, dt)
 
     local speedBonus = (unit.overdriveTimer > 0) and 1.4 or 1.0
     local sylvanBonus = (synergies.sylvan and unit.family == "sylvan") and 1.2 or 1.0
+    local drumBonus = (state.hasItem and state:hasItem("war_drum")) and 1.18 or 1.0
     local coreAspdBonus = (not unit.isSummon
       and (unit.attackType == "arrow" or unit.attackType == "multishot" or unit.attackType == "magic")
       and state:hasCore("wind_quiver")) and 1.22 or 1.0
 
-    unit.cooldown = unit.cooldown - dt * speedBonus * sylvanBonus * coreAspdBonus
+    unit.cooldown = unit.cooldown - dt * speedBonus * sylvanBonus * drumBonus * coreAspdBonus
+    unit.skillCooldown = math.max(0, (unit.skillCooldown or 2.0) - dt)
 
     local target = nil
     local bestScore = math.huge
@@ -547,12 +613,15 @@ function M.updateBattle(state, dt)
         if len == 0 then len = 1 end
         local maxAdvanceX = (unit.role == "backline")
           and math.max(M.ARENA.castleX + 360, M.ARENA.rightBound - unit.range + 40)
-          or (M.ARENA.rightBound - 6)
+          or (M.ARENA.rightBound - 44)
         local nx = unit.x + (dx / len) * unit.speed * dt
         local ny = unit.y + (dy / len) * unit.speed * dt
         unit.x = math.min(maxAdvanceX, math.max(M.ARENA.castleX + 26, nx))
         unit.y = math.max(M.ARENA.minY, math.min(M.ARENA.maxY, ny))
       elseif unit.cooldown <= 0 then
+        if unit.activeSkill and (unit.skillCooldown or 0) <= 0 then
+          triggerActiveSkill(state, unit, target, synergies)
+        end
         performAllyAttack(state, unit, target, synergies)
       end
     else
@@ -572,8 +641,15 @@ function M.updateBattle(state, dt)
       foe.hitFlash = math.max(0, foe.hitFlash - dt)
       foe.attackAnim = math.max(0, foe.attackAnim - dt)
 
-      -- Status Effects: Chill & Burn
+      -- Status Effects: Entry rush, Chill, Root & Burn
+      foe.entryTimer = math.max(0, (foe.entryTimer or 0) - dt)
       foe.chillTimer = math.max(0, (foe.chillTimer or 0) - dt)
+      foe.rootTimer = math.max(0, (foe.rootTimer or 0) - dt)
+      if foe.x <= M.ARENA.castleX + 110 and foe.rootTimer <= 0 and (state.gateNetCharges or 0) > 0 then
+        state.gateNetCharges = state.gateNetCharges - 1
+        foe.rootTimer = 2.5
+        addFloatingText(state, foe.x, foe.y - 26, "ROOTED!", Color.hex("#a3e635"), 1.0)
+      end
       local slowMult = (foe.chillTimer > 0) and 0.65 or 1.0
       foe.cooldown = foe.cooldown - dt * slowMult
 
@@ -662,19 +738,23 @@ function M.updateBattle(state, dt)
             end
           end
         else
-          local effSpeed = foe.speed * slowMult
-          local moveX = -effSpeed
-          local moveY = 0
-          if target and math.abs(target.x - foe.x) < 160 then
-            local dx = target.x - foe.x
-            local dy = target.y - foe.y
-            local len = math.sqrt(dx * dx + dy * dy)
-            if len == 0 then len = 1 end
-            moveX = (dx / len) * effSpeed
-            moveY = (dy / len) * effSpeed
+          if foe.rootTimer and foe.rootTimer > 0 then
+            -- Rooted in place by Gate Net
+          else
+            local effSpeed = foe.speed * slowMult * (((foe.entryTimer or 0) > 0) and 1.55 or 1.0)
+            local moveX = -effSpeed
+            local moveY = 0
+            if target and math.abs(target.x - foe.x) < 160 then
+              local dx = target.x - foe.x
+              local dy = target.y - foe.y
+              local len = math.sqrt(dx * dx + dy * dy)
+              if len == 0 then len = 1 end
+              moveX = (dx / len) * effSpeed
+              moveY = (dy / len) * effSpeed
+            end
+            foe.x = foe.x + moveX * dt
+            foe.y = math.max(M.ARENA.minY, math.min(M.ARENA.maxY, foe.y + moveY * dt))
           end
-          foe.x = foe.x + moveX * dt
-          foe.y = math.max(M.ARENA.minY, math.min(M.ARENA.maxY, foe.y + moveY * dt))
         end
 
         if foe.x <= M.ARENA.castleX then
