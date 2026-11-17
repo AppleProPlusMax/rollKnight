@@ -17,6 +17,10 @@ local dragState = nil
 local totalTime = 0
 local smokeFrames = nil
 
+local function dist2D(dx, dy)
+  return math.sqrt(dx * dx + dy * dy)
+end
+
 local function getViewportTransform()
   local w, h = love.graphics.getDimensions()
   local scale = math.min(w / VIRTUAL_W, h / VIRTUAL_H)
@@ -127,6 +131,11 @@ function love.update(dt)
       state:spin()
     elseif smokeFrames == 3 then
       state:update(1.0)
+      -- Exercise drag-and-drop input handlers
+      local u = state.roster[1]
+      dragState = { unitId = u.id, startX = u.x, startY = u.y, curX = u.x, curY = u.y, active = false }
+      love.mousemoved(u.x + 25, u.y + 10)
+      love.mousereleased(u.x + 25, u.y + 10, 1)
       state.shopModal = true
     elseif smokeFrames == 4 then
       state.shopModal = false
@@ -170,7 +179,7 @@ function love.mousemoved(x, y)
   if dragState then
     dragState.curX = pos.x
     dragState.curY = pos.y
-    if math.hypot(pos.x - dragState.startX, pos.y - dragState.startY) > 7 then
+    if dist2D(pos.x - dragState.startX, pos.y - dragState.startY) > 7 then
       dragState.active = true
     end
   end
@@ -225,7 +234,7 @@ function love.mousereleased(x, y, button)
   -- Check if dropped onto another allied unit -> Absorb!
   local dropTarget = nil
   for _, u in ipairs(state.roster) do
-    if u.id ~= dragged.unitId and math.hypot(pos.x - u.x, pos.y - u.y) <= 28 then
+    if u.id ~= dragged.unitId and dist2D(pos.x - u.x, pos.y - u.y) <= 28 then
       dropTarget = u
       break
     end
