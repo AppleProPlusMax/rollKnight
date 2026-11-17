@@ -79,7 +79,6 @@ function SlotMachine.new(weights)
       Symbols.buildReelStrip(weights),
     },
     offsets = { 1, 1, 1 },
-    locked = { false, false, false },
     spinning = false,
     forceCenterWild = false,
     leverPull = 0,
@@ -152,22 +151,10 @@ function SlotMachine:startSpin(opts)
   self.tickAccum = { 0, 0, 0 }
 
   local baseDurs = { 0.36, 0.56, 0.78 }
-  local anySpinning = false
   for col = 1, 3 do
-    if self.locked[col] then
-      self.reelSpinning[col] = false
-      self.reelTimers[col] = 0
-    else
-      anySpinning = true
-      self.reelSpinning[col] = true
-      self.reelTimers[col] = baseDurs[col]
-      self.offsets[col] = math.random(1, #self.strips[col])
-    end
-  end
-
-  if not anySpinning then
-    self.reelSpinning[3] = true
-    self.reelTimers[3] = 0.36
+    self.reelSpinning[col] = true
+    self.reelTimers[col] = baseDurs[col]
+    self.offsets[col] = math.random(1, #self.strips[col])
   end
 end
 
@@ -214,7 +201,6 @@ function SlotMachine:update(dt)
   if not self.reelSpinning[1] and not self.reelSpinning[2] and not self.reelSpinning[3] then
     self.spinning = false
     self.forceCenterWild = false
-    self.locked = { false, false, false }
     return { finished = true, stoppedCols = stoppedCols, ticked = ticked }
   end
 

@@ -7,7 +7,6 @@ local Battle = require("src.systems.battle")
 local Color = require("src.utils.color")
 
 local M = {}
-M.LOCK_REEL_COST = 3
 M.MAX_PITY = 4
 
 M.DIFFICULTIES = {
@@ -264,31 +263,6 @@ function GameState:spin()
   self.spinMatchedThisTurn = false
   self.slot:startSpin({ forceCenterWild = isPity })
   self.audio:playLever()
-  return true
-end
-
-function GameState:toggleReelLock(col)
-  if (self.phase ~= "spin" and self.phase ~= "battle")
-     or self.coreModal or self.classModal or self.shopModal or self.guideModal or self.slot.spinning then
-    return false
-  end
-  if col < 1 or col > 3 then return false end
-  if self.slot.locked[col] then
-    self.slot.locked[col] = false
-    self.gold = self.gold + M.LOCK_REEL_COST
-    self.audio:playNudge()
-    return true
-  end
-  local lockedCount = 0
-  for i = 1, 3 do
-    if self.slot.locked[i] then lockedCount = lockedCount + 1 end
-  end
-  if lockedCount >= 2 or self.gold < M.LOCK_REEL_COST then
-    return false
-  end
-  self.gold = self.gold - M.LOCK_REEL_COST
-  self.slot.locked[col] = true
-  self.audio:playReelStop(col - 1)
   return true
 end
 

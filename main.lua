@@ -85,8 +85,6 @@ local function dispatchAction(hit)
     state:spin()
   elseif id == "nudge" then
     state:nudgeReel(hit.payload.col, hit.payload.dir)
-  elseif id == "lock_reel" then
-    state:toggleReelLock(hit.payload.col)
   elseif id == "start_wave" then
     state:startWave()
   elseif id == "toggle_feed" then
@@ -284,12 +282,6 @@ function love.keypressed(key)
   elseif key == "g" and state.phase ~= "menu" then
     state.shopModal = false
     state.guideModal = not state.guideModal
-  elseif key == "1" then
-    state:toggleReelLock(1)
-  elseif key == "2" then
-    state:toggleReelLock(2)
-  elseif key == "3" then
-    state:toggleReelLock(3)
   elseif key == "escape" then
     if state.shopModal then
       state.shopModal = false

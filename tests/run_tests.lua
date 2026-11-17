@@ -146,23 +146,9 @@ addTest("allies can reach and defeat ranged enemies positioned on far-right aren
   end
 end)
 
-addTest("reel locking, jester wildcards, upgrade shop, and custom repositioning work", function()
+addTest("jester wildcards, upgrade shop, and custom repositioning work", function()
   local state = StateMod.GameState.new(mockAudio)
   state:startRun()
-  local startGold = state.gold
-
-  -- Lock reel 1 for 3g, spin, verify reel 1 offset stays unchanged
-  local col1Before = state.slot.offsets[1]
-  assert(state:toggleReelLock(1) == true)
-  assert(state.gold == startGold - StateMod.LOCK_REEL_COST)
-  assert(state:spin() == true)
-  state:update(0.05)
-  assert(state.slot.reelSpinning[1] == false)
-  assert(state.slot.offsets[1] == col1Before)
-  for _ = 1, 25 do
-    state:update(0.05)
-  end
-  assert(state.slot.locked[1] == false)
 
   -- Jester wildcard matches line
   local jMatch = SlotMod.resolveLineSymbols("shield", "jester", "shield")

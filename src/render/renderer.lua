@@ -473,7 +473,6 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp, 
 
   for col = 1, 3 do
     local isSpinning = state.slot.reelSpinning[col]
-    local isLocked = state.slot.locked[col]
     local shiftPx = isSpinning and (state.slot.reelVisualShift[col] * (CELL_H + 3)) or 0
     local bouncePx = (not isSpinning) and (math.sin(state.slot.reelBounce[col] * math.pi) * 6) or 0
     local startRow = isSpinning and 0 or 1
@@ -483,10 +482,10 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp, 
       local cellY = REEL_BOX.y + 6 + (row - 1) * (CELL_H + 3) + shiftPx + bouncePx
       local isMatch = (not state.slot.spinning) and (row >= 1) and matchedSet[col .. "," .. row]
 
-      lg.setColor(isLocked and Color.hex("#23203d") or (isMatch and Color.hex("#2d2614") or Color.hex("#161a29")))
+      lg.setColor(isMatch and Color.hex("#2d2614") or Color.hex("#161a29"))
       lg.rectangle("fill", cellX, cellY, CELL_W, CELL_H, 6, 6)
-      lg.setLineWidth(isMatch and 2.5 or (isLocked and 2 or 1))
-      lg.setColor(isLocked and Color.hex("#818cf8") or (isMatch and Color.hex("#ffdf6b") or Color.hex("#272d45")))
+      lg.setLineWidth(isMatch and 2.5 or 1)
+      lg.setColor(isMatch and Color.hex("#ffdf6b") or Color.hex("#272d45"))
       lg.rectangle("line", cellX, cellY, CELL_W, CELL_H, 6, 6)
       lg.setLineWidth(1)
 
@@ -515,12 +514,12 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp, 
     lg.setLineWidth(1)
   end
 
-  -- Nudge DOWN + Reel LOCK row
+  -- Nudge DOWN row (full cell width)
   for col = 1, 3 do
     local cx = REEL_BOX.x + 6 + (col - 1) * (CELL_W + CELL_GAP)
-    local dnRect = { x = cx, y = 342, w = 52, h = 24 }
+    local dnRect = { x = cx, y = 342, w = CELL_W, h = 24 }
     local hintDn = canNudge and state.slot:wouldNudgeMatch(col, -1)
-    self:drawButton(dnRect, (hintDn and "* " or "v ") .. t("nudgeDown"), {
+    self:drawButton(dnRect, (hintDn and "* v " or "v ") .. t("nudgeDown"), {
       disabled = not canNudge,
       bg = hintDn and Color.hex("#2b4a26") or Color.hex("#21322b"),
       border = hintDn and Color.hex("#facc15") or Color.hex("#4ade80"),
@@ -529,18 +528,6 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp, 
       hovered = isHover(hoverPos, dnRect),
     })
     registerHit("nudge", dnRect, { col = col, dir = -1 })
-
-    local isLocked = state.slot.locked[col]
-    local lockRect = { x = cx + 55, y = 342, w = 39, h = 24 }
-    self:drawButton(lockRect, isLocked and t("lockedReel") or (t("lockReel") .. StateMod.LOCK_REEL_COST), {
-      active = isLocked,
-      disabled = state.slot.spinning or modalBlocked or (not isLocked and state.gold < StateMod.LOCK_REEL_COST),
-      bg = Color.hex("#1e2438"),
-      border = Color.hex("#64748b"),
-      font = self.fonts.f11,
-      hovered = isHover(hoverPos, lockRect),
-    })
-    registerHit("lock_reel", lockRect, { col = col })
   end
 
   -- Luck / Pity Meter Bar
