@@ -8,7 +8,7 @@ M.SYMBOLS = {
     name = { zh = "盾卫", en = "Warrior" },
     unitId = "warrior",
     color = Color.hex("#5b9bd5"),
-    weight = 24,
+    weight = 23,
     payoutGold = 0,
   },
   bow = {
@@ -16,7 +16,7 @@ M.SYMBOLS = {
     name = { zh = "游侠", en = "Ranger" },
     unitId = "ranger",
     color = Color.hex("#6ec472"),
-    weight = 22,
+    weight = 21,
     payoutGold = 0,
   },
   staff = {
@@ -24,7 +24,7 @@ M.SYMBOLS = {
     name = { zh = "法师", en = "Mage" },
     unitId = "mage",
     color = Color.hex("#b07fe8"),
-    weight = 18,
+    weight = 17,
     payoutGold = 0,
   },
   horse = {
@@ -32,7 +32,7 @@ M.SYMBOLS = {
     name = { zh = "骑兵", en = "Cavalry" },
     unitId = "cavalry",
     color = Color.hex("#e69d45"),
-    weight = 16,
+    weight = 15,
     payoutGold = 0,
   },
   skull = {
@@ -49,22 +49,31 @@ M.SYMBOLS = {
     unitId = nil,
     color = Color.hex("#f6c945"),
     weight = 16,
-    payoutGold = 22,
+    payoutGold = 24,
+  },
+  jester = {
+    id = "jester",
+    name = { zh = "弄臣", en = "Jester" },
+    unitId = "jester",
+    color = Color.hex("#ff4d6d"),
+    weight = 6,
+    payoutGold = 8,
+    isWild = true,
   },
   crown = {
     id = "crown",
     name = { zh = "头奖", en = "Jackpot" },
     unitId = "champion",
     color = Color.hex("#ffdf6b"),
-    weight = 6,
-    payoutGold = 15,
+    weight = 5,
+    payoutGold = 18,
     isJackpot = true,
+    isWild = true,
   },
 }
 
-M.SYMBOL_KEYS = { "shield", "bow", "staff", "horse", "skull", "coin", "crown" }
+M.SYMBOL_KEYS = { "shield", "bow", "staff", "horse", "skull", "coin", "jester", "crown" }
 
--- 8 standard 3x3 paylines using 1-based [col, row] coordinates (1..3)
 M.PAYLINES = {
   { id = "row1", name = "Top Row", isDiagonal = false, cells = { { 1, 1 }, { 2, 1 }, { 3, 1 } } },
   { id = "row2", name = "Mid Row", isDiagonal = false, cells = { { 1, 2 }, { 2, 2 }, { 3, 2 } } },

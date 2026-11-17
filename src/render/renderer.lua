@@ -1,6 +1,7 @@
 local Symbols = require("src.data.symbols")
 local Waves = require("src.data.waves")
 local Units = require("src.data.units")
+local Upgrades = require("src.data.upgrades")
 local StateMod = require("src.systems.state")
 local Battle = require("src.systems.battle")
 local Sprites = require("src.render.sprites")
@@ -9,10 +10,10 @@ local Color = require("src.utils.color")
 local Renderer = {}
 Renderer.__index = Renderer
 
-local SLOT_PANEL = { x = 16, y = 78, w = 364, h = 626 }
-local REEL_BOX = { x = 34, y = 152, w = 328, h = 222 }
+local SLOT_PANEL = { x = 16, y = 74, w = 364, h = 632 }
+local REEL_BOX = { x = 34, y = 138, w = 328, h = 210 }
 local CELL_W = 100
-local CELL_H = 68
+local CELL_H = 64
 local CELL_GAP = 8
 
 local function loadFontFromPaths(paths, size)
@@ -36,10 +37,7 @@ local function loadFontFromPaths(paths, size)
 end
 
 function Renderer.new()
-  local self = setmetatable({
-    fonts = {},
-  }, Renderer)
-  return self
+  return setmetatable({ fonts = {} }, Renderer)
 end
 
 function Renderer:initFonts()
@@ -48,7 +46,6 @@ function Renderer:initFonts()
     "C:/Windows/Fonts/msyh.ttf",
     "C:/Windows/Fonts/simhei.ttf",
     "C:/Windows/Fonts/simsun.ttc",
-    "C:/Windows/Fonts/seguisym.ttf",
     "/System/Library/Fonts/PingFang.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
   }
@@ -96,18 +93,18 @@ function Renderer:drawButton(rect, label, opts)
     border = Color.hex("#2d3348")
     textCol = Color.hex("#64748b")
   elseif opts.active then
-    bg = Color.hex("#4f46e5")
-    border = Color.hex("#a5b4fc")
+    bg = opts.activeBg or Color.hex("#4f46e5")
+    border = opts.activeBorder or Color.hex("#a5b4fc")
   elseif opts.hovered then
     bg = Color.hex("#384266")
     border = Color.hex("#8da2fb")
   end
 
   lg.setColor(bg)
-  lg.rectangle("fill", rect.x, rect.y, rect.w, rect.h, 7, 7)
+  lg.rectangle("fill", rect.x, rect.y, rect.w, rect.h, 6, 6)
   lg.setLineWidth(2)
   lg.setColor(border)
-  lg.rectangle("line", rect.x, rect.y, rect.w, rect.h, 7, 7)
+  lg.rectangle("line", rect.x, rect.y, rect.w, rect.h, 6, 6)
   lg.setLineWidth(1)
 
   if opts.subLabel then
@@ -125,7 +122,7 @@ end
 local function drawHealthBar(x, y, w, h, ratio, color)
   local lg = love.graphics
   local r = math.max(0, math.min(1, ratio))
-  lg.setColor(0.04, 0.05, 0.08, 0.85)
+  lg.setColor(0.04, 0.05, 0.08, 0.88)
   lg.rectangle("fill", x - 1, y - 1, w + 2, h + 2)
   lg.setColor(Color.hex("#334155"))
   lg.rectangle("fill", x, y, w, h)
@@ -133,7 +130,7 @@ local function drawHealthBar(x, y, w, h, ratio, color)
   lg.rectangle("fill", x, y, w * r, h)
 end
 
-function Renderer:render(state, i18n, time, hoverPos)
+function Renderer:render(state, i18n, time, hoverPos, dragState, viewportTransform)
   local lg = love.graphics
   local hitboxes = {}
   local function registerHit(id, rect, payload)
@@ -147,7 +144,7 @@ function Renderer:render(state, i18n, time, hoverPos)
     lg.translate(sx, sy)
   end
 
-  lg.setColor(Color.hex("#11131e"))
+  lg.setColor(Color.hex("#10121c"))
   lg.rectangle("fill", 0, 0, 1280, 720)
 
   if state.phase == "menu" then
@@ -157,8 +154,8 @@ function Renderer:render(state, i18n, time, hoverPos)
   end
 
   self:renderHud(state, i18n, registerHit, hoverPos)
-  self:renderSlotPanel(state, i18n, registerHit, hoverPos)
-  self:renderArena(state, i18n, time, registerHit, hoverPos)
+  self:renderSlotPanel(state, i18n, time, registerHit, hoverPos, viewportTransform)
+  self:renderArena(state, i18n, time, registerHit, hoverPos, dragState)
   self:renderRosterStrip(state, i18n, registerHit, hoverPos)
 
   if state.jackpotFlash > 0 then
@@ -176,7 +173,9 @@ function Renderer:render(state, i18n, time, hoverPos)
     lg.printf(ft.text, ft.x - 100, ft.y, 200, "center")
   end
 
-  if state.coreModal then
+  if state.shopModal then
+    self:renderShopModal(state, i18n, registerHit, hoverPos)
+  elseif state.coreModal then
     self:renderCoreModal(state, i18n, registerHit, hoverPos)
   elseif state.classModal then
     self:renderClassModal(state, i18n, registerHit, hoverPos)
@@ -197,44 +196,44 @@ function Renderer:renderMenu(state, i18n, time, registerHit, hoverPos)
   for y = 0, 720, 40 do lg.line(0, y, 1280, y) end
 
   lg.setColor(Color.hex("#181c2e"))
-  lg.rectangle("fill", 220, 74, 840, 572, 16, 16)
+  lg.rectangle("fill", 200, 70, 880, 580, 16, 16)
   lg.setLineWidth(3)
   lg.setColor(Color.hex("#f6c945"))
-  lg.rectangle("line", 220, 74, 840, 572, 16, 16)
+  lg.rectangle("line", 200, 70, 880, 580, 16, 16)
   lg.setLineWidth(1)
 
-  local demoSymbols = { "shield", "bow", "staff", "horse", "skull", "coin", "crown" }
+  local demoSymbols = { "shield", "bow", "staff", "horse", "skull", "coin", "jester", "crown" }
   for i, sym in ipairs(demoSymbols) do
-    local sx = 355 + (i - 1) * 95
-    local sy = 152 + math.sin(time * 3 + i) * 5
+    local sx = 310 + (i - 1) * 94
+    local sy = 148 + math.sin(time * 3 + i) * 5
     Sprites.drawSymbolIcon(sym, sx, sy, 40)
   end
 
   lg.setFont(self.fonts.f54)
   lg.setColor(Color.hex("#ffdf6b"))
-  lg.printf(t("title"), 220, 192, 840, "center")
+  lg.printf(t("title"), 200, 186, 880, "center")
 
   lg.setFont(self.fonts.f18)
   lg.setColor(Color.hex("#cbd5e1"))
-  lg.printf(t("subtitle"), 220, 254, 840, "center")
+  lg.printf(t("subtitle"), 200, 248, 880, "center")
 
   lg.setColor(Color.hex("#111422"))
-  lg.rectangle("fill", 290, 296, 700, 178, 10, 10)
+  lg.rectangle("fill", 250, 292, 780, 182, 10, 10)
   lg.setColor(Color.hex("#334155"))
-  lg.rectangle("line", 290, 296, 700, 178, 10, 10)
+  lg.rectangle("line", 250, 292, 780, 182, 10, 10)
 
   lg.setFont(self.fonts.f15)
   lg.setColor(Color.hex("#93c5fd"))
-  lg.print(t("rulesTitle"), 316, 312)
+  lg.print(t("rulesTitle"), 276, 308)
 
   lg.setFont(self.fonts.f14)
   lg.setColor(Color.hex("#e2e8f0"))
-  lg.print(t("rule1"), 316, 344)
-  lg.print(t("rule2"), 316, 374)
-  lg.print(t("rule3"), 316, 404)
-  lg.print(t("rule4"), 316, 434)
+  lg.print(t("rule1"), 276, 340)
+  lg.print(t("rule2"), 276, 370)
+  lg.print(t("rule3"), 276, 400)
+  lg.print(t("rule4"), 276, 430)
 
-  local startBtn = { x = 490, y = 500, w = 300, h = 64 }
+  local startBtn = { x = 490, y = 502, w = 300, h = 64 }
   self:drawButton(startBtn, t("startRun"), {
     bg = Color.hex("#d97706"),
     border = Color.hex("#fde047"),
@@ -246,9 +245,9 @@ function Renderer:renderMenu(state, i18n, time, registerHit, hoverPos)
 
   lg.setFont(self.fonts.f13)
   lg.setColor(Color.hex("#94a3b8"))
-  lg.printf(t("continueHint"), 220, 584, 840, "center")
+  lg.printf(t("continueHint"), 200, 590, 880, "center")
 
-  local langBtn = { x = 960, y = 92, w = 74, h = 32 }
+  local langBtn = { x = 980, y = 90, w = 74, h = 32 }
   self:drawButton(langBtn, t("langToggle"), { hovered = isHover(hoverPos, langBtn) })
   registerHit("toggle_lang", langBtn)
 end
@@ -266,14 +265,14 @@ function Renderer:renderHud(state, i18n, registerHit, hoverPos)
 
   lg.setFont(self.fonts.f22)
   lg.setColor(Color.hex("#ffdf6b"))
-  lg.print("rollKnight", 20, 18)
+  lg.print("rollKnight", 18, 18)
 
   local pills = {
-    { label = t("wave") .. ": " .. state.wave .. "/" .. Waves.MAX_WAVES, color = Color.hex("#93c5fd"), x = 165, w = 128 },
-    { label = t("hearts") .. ": " .. state.hearts .. "/" .. state.maxHearts, color = Color.hex("#fb7185"), x = 305, w = 114 },
-    { label = t("gold") .. ": " .. state.gold .. "g", color = Color.hex("#facc15"), x = 431, w = 116 },
-    { label = t("nudges") .. ": " .. state.nudges, color = Color.hex("#4ade80"), x = 559, w = 118 },
-    { label = t("roster") .. ": " .. #state.roster .. "/" .. StateMod.MAX_ROSTER, color = Color.hex("#c084fc"), x = 689, w = 128 },
+    { label = t("wave") .. ": " .. state.wave .. "/" .. Waves.MAX_WAVES, color = Color.hex("#93c5fd"), x = 152, w = 122 },
+    { label = t("hearts") .. ": " .. state.hearts .. "/" .. state.maxHearts, color = Color.hex("#fb7185"), x = 284, w = 110 },
+    { label = t("gold") .. ": " .. state.gold .. "g", color = Color.hex("#facc15"), x = 404, w = 110 },
+    { label = t("nudges") .. ": " .. state.nudges, color = Color.hex("#4ade80"), x = 524, w = 108 },
+    { label = t("roster") .. ": " .. #state.roster .. "/" .. state.maxRoster, color = Color.hex("#c084fc"), x = 642, w = 116 },
   }
 
   for _, p in ipairs(pills) do
@@ -281,36 +280,49 @@ function Renderer:renderHud(state, i18n, registerHit, hoverPos)
     lg.rectangle("fill", p.x, 14, p.w, 34, 7, 7)
     lg.setColor(Color.hex("#2e3654"))
     lg.rectangle("line", p.x, 14, p.w, 34, 7, 7)
-    drawCenteredText(self.fonts.f14, p.label, p.x, 14, p.w, 34, p.color)
+    drawCenteredText(self.fonts.f13, p.label, p.x, 14, p.w, 34, p.color)
   end
 
-  local speedBtn = { x = 868, y = 14, w = 94, h = 34 }
+  local shopBtn = { x = 770, y = 14, w = 98, h = 34 }
+  self:drawButton(shopBtn, t("shopBtn"), {
+    active = state.shopModal,
+    bg = Color.hex("#3b2e16"),
+    border = Color.hex("#facc15"),
+    font = self.fonts.f13,
+    hovered = isHover(hoverPos, shopBtn),
+  })
+  registerHit("toggle_shop", shopBtn)
+
+  local speedBtn = { x = 876, y = 14, w = 88, h = 34 }
   self:drawButton(speedBtn, state.fastForward and t("speed2x") or t("speed1x"), {
     active = state.fastForward,
+    font = self.fonts.f13,
     hovered = isHover(hoverPos, speedBtn),
   })
   registerHit("toggle_speed", speedBtn)
 
-  local pauseBtn = { x = 970, y = 14, w = 86, h = 34 }
+  local pauseBtn = { x = 972, y = 14, w = 80, h = 34 }
   self:drawButton(pauseBtn, state.paused and t("resume") or t("pause"), {
     active = state.paused,
+    font = self.fonts.f13,
     hovered = isHover(hoverPos, pauseBtn),
   })
   registerHit("toggle_pause", pauseBtn)
 
-  local muteBtn = { x = 1064, y = 14, w = 92, h = 34 }
+  local muteBtn = { x = 1060, y = 14, w = 82, h = 34 }
   self:drawButton(muteBtn, state.audio.muted and t("unmute") or t("mute"), {
     active = state.audio.muted,
+    font = self.fonts.f13,
     hovered = isHover(hoverPos, muteBtn),
   })
   registerHit("toggle_mute", muteBtn)
 
-  local langBtn = { x = 1164, y = 14, w = 96, h = 34 }
-  self:drawButton(langBtn, t("langToggle"), { hovered = isHover(hoverPos, langBtn) })
+  local langBtn = { x = 1150, y = 14, w = 110, h = 34 }
+  self:drawButton(langBtn, t("langToggle"), { font = self.fonts.f13, hovered = isHover(hoverPos, langBtn) })
   registerHit("toggle_lang", langBtn)
 end
 
-function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
+function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp)
   local lg = love.graphics
   local function t(k) return i18n:t(k) end
 
@@ -321,15 +333,16 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
   lg.rectangle("line", SLOT_PANEL.x, SLOT_PANEL.y, SLOT_PANEL.w, SLOT_PANEL.h, 10, 10)
   lg.setLineWidth(1)
 
-  lg.setFont(self.fonts.f16)
+  lg.setFont(self.fonts.f15)
   lg.setColor(Color.hex("#f6c945"))
-  lg.printf(t("slotTitle"), SLOT_PANEL.x, SLOT_PANEL.y + 10, SLOT_PANEL.w, "center")
+  lg.printf(t("slotTitle"), SLOT_PANEL.x, SLOT_PANEL.y + 8, SLOT_PANEL.w, "center")
 
-  local canNudge = (not state.slot.spinning) and (state.nudges > 0) and (not state.coreModal) and (not state.classModal)
+  local modalBlocked = state.coreModal or state.classModal or state.shopModal
+  local canNudge = (not state.slot.spinning) and (state.nudges > 0) and (not modalBlocked)
 
   for col = 1, 3 do
     local cx = REEL_BOX.x + 6 + (col - 1) * (CELL_W + CELL_GAP)
-    local upRect = { x = cx, y = 116, w = CELL_W, h = 28 }
+    local upRect = { x = cx, y = 106, w = CELL_W, h = 26 }
     self:drawButton(upRect, "^ " .. t("nudgeUp"), {
       disabled = not canNudge,
       bg = Color.hex("#21322b"),
@@ -340,6 +353,7 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
     registerHit("nudge", upRect, { col = col, dir = 1 })
   end
 
+  -- Reel Window Frame
   lg.setColor(Color.hex("#0e101a"))
   lg.rectangle("fill", REEL_BOX.x, REEL_BOX.y, REEL_BOX.w, REEL_BOX.h, 8, 8)
   lg.setLineWidth(3)
@@ -347,7 +361,6 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
   lg.rectangle("line", REEL_BOX.x, REEL_BOX.y, REEL_BOX.w, REEL_BOX.h, 8, 8)
   lg.setLineWidth(1)
 
-  local grid = state.slot:getGrid()
   local matchedSet = {}
   for _, m in ipairs(state.slot.activeMatches) do
     for _, cell in ipairs(m.cells) do
@@ -355,28 +368,42 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
     end
   end
 
-  for col = 1, 3 do
-    for row = 1, 3 do
-      local cellX = REEL_BOX.x + 6 + (col - 1) * (CELL_W + CELL_GAP)
-      local cellY = REEL_BOX.y + 6 + (row - 1) * (CELL_H + 3)
-      local isMatch = (not state.slot.spinning) and matchedSet[col .. "," .. row]
+  -- Scissor inside reel viewport for smooth vertical strip scrolling
+  local sx = vp.ox + (REEL_BOX.x + 4) * vp.scale
+  local sy = vp.oy + (REEL_BOX.y + 4) * vp.scale
+  local sw = (REEL_BOX.w - 8) * vp.scale
+  local sh = (REEL_BOX.h - 8) * vp.scale
+  lg.setScissor(sx, sy, sw, sh)
 
-      lg.setColor(isMatch and Color.hex("#2d2614") or Color.hex("#161a29"))
+  for col = 1, 3 do
+    local isSpinning = state.slot.reelSpinning[col]
+    local isLocked = state.slot.locked[col]
+    local shiftPx = isSpinning and (state.slot.reelVisualShift[col] * (CELL_H + 3)) or 0
+    local bouncePx = (not isSpinning) and (math.sin(state.slot.reelBounce[col] * math.pi) * 6) or 0
+    local startRow = isSpinning and 0 or 1
+
+    for row = startRow, 3 do
+      local cellX = REEL_BOX.x + 6 + (col - 1) * (CELL_W + CELL_GAP)
+      local cellY = REEL_BOX.y + 6 + (row - 1) * (CELL_H + 3) + shiftPx + bouncePx
+      local isMatch = (not state.slot.spinning) and (row >= 1) and matchedSet[col .. "," .. row]
+
+      lg.setColor(isLocked and Color.hex("#23203d") or (isMatch and Color.hex("#2d2614") or Color.hex("#161a29")))
       lg.rectangle("fill", cellX, cellY, CELL_W, CELL_H, 6, 6)
-      lg.setLineWidth(isMatch and 2.5 or 1)
-      lg.setColor(isMatch and Color.hex("#ffdf6b") or Color.hex("#272d45"))
+      lg.setLineWidth(isMatch and 2.5 or (isLocked and 2 or 1))
+      lg.setColor(isLocked and Color.hex("#818cf8") or (isMatch and Color.hex("#ffdf6b") or Color.hex("#272d45")))
       lg.rectangle("line", cellX, cellY, CELL_W, CELL_H, 6, 6)
       lg.setLineWidth(1)
 
-      local symId = grid[col][row]
-      local shiftY = state.slot.reelSpinning[col] and ((state.slot.reelVisualShift[col] - 0.5) * 18) or 0
-      Sprites.drawSymbolIcon(symId, cellX + CELL_W / 2, cellY + CELL_H / 2 - 5 + shiftY, 36)
+      local symId = state.slot:getSymbolAt(col, row - 1)
+      Sprites.drawSymbolIcon(symId, cellX + CELL_W / 2, cellY + CELL_H / 2 - 6, 34)
 
       lg.setFont(self.fonts.f11)
       lg.setColor(Symbols.SYMBOLS[symId].color)
-      lg.printf(i18n:pick(Symbols.SYMBOLS[symId].name), cellX, cellY + CELL_H - 18, CELL_W, "center")
+      lg.printf(i18n:pick(Symbols.SYMBOLS[symId].name), cellX, cellY + CELL_H - 17, CELL_W, "center")
     end
   end
+
+  lg.setScissor()
 
   if not state.slot.spinning and #state.slot.activeMatches > 0 then
     lg.setLineWidth(3.5)
@@ -392,38 +419,51 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
     lg.setLineWidth(1)
   end
 
+  -- Nudge DOWN + Reel LOCK row
   for col = 1, 3 do
     local cx = REEL_BOX.x + 6 + (col - 1) * (CELL_W + CELL_GAP)
-    local dnRect = { x = cx, y = 382, w = CELL_W, h = 28 }
+    local dnRect = { x = cx, y = 354, w = 54, h = 26 }
     self:drawButton(dnRect, "v " .. t("nudgeDown"), {
       disabled = not canNudge,
       bg = Color.hex("#21322b"),
       border = Color.hex("#4ade80"),
-      font = self.fonts.f12,
+      font = self.fonts.f11,
       hovered = isHover(hoverPos, dnRect),
     })
     registerHit("nudge", dnRect, { col = col, dir = -1 })
+
+    local isLocked = state.slot.locked[col]
+    local lockRect = { x = cx + 58, y = 354, w = 42, h = 26 }
+    self:drawButton(lockRect, isLocked and t("lockedReel") or (t("lockReel") .. StateMod.LOCK_REEL_COST), {
+      active = isLocked,
+      disabled = state.slot.spinning or modalBlocked or (not isLocked and state.gold < StateMod.LOCK_REEL_COST),
+      bg = Color.hex("#1e2438"),
+      border = Color.hex("#64748b"),
+      font = self.fonts.f11,
+      hovered = isHover(hoverPos, lockRect),
+    })
+    registerHit("lock_reel", lockRect, { col = col })
   end
 
   local spinCost = state:currentSpinCost()
-  local spinRect = { x = 34, y = 422, w = 160, h = 54 }
+  local spinRect = { x = 34, y = 390, w = 160, h = 50 }
   self:drawButton(spinRect, state.slot.spinning and t("spinning") or t("spin"), {
     disabled = not state:canSpin(),
     bg = Color.hex("#b45309"),
     border = Color.hex("#fbbf24"),
     subLabel = (spinCost == 0) and t("free") or (tostring(spinCost) .. "g"),
-    font = self.fonts.f16,
+    font = self.fonts.f15,
     hovered = isHover(hoverPos, spinRect),
   })
   registerHit("spin", spinRect)
 
-  local fightRect = { x = 202, y = 422, w = 160, h = 54 }
+  local fightRect = { x = 202, y = 390, w = 160, h = 50 }
   local inBattle = (state.phase == "battle")
   self:drawButton(fightRect, inBattle and t("inBattle") or t("startWave"), {
-    disabled = inBattle or (state.coreModal ~= nil) or (state.classModal ~= nil),
+    disabled = inBattle or (modalBlocked ~= nil),
     bg = Color.hex("#15803d"),
     border = Color.hex("#4ade80"),
-    font = self.fonts.f16,
+    font = self.fonts.f15,
     hovered = isHover(hoverPos, fightRect),
   })
   registerHit("start_wave", fightRect)
@@ -435,36 +475,44 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
   end
   if not sel then sel = state.roster[1] end
 
-  local card = { x = 34, y = 486, w = 328, h = 126 }
+  local card = { x = 34, y = 448, w = 328, h = 166 }
   lg.setColor(Color.hex("#121524"))
   lg.rectangle("fill", card.x, card.y, card.w, card.h, 8, 8)
-  lg.setColor(Color.hex("#2d3554"))
+  lg.setColor(sel and sel.rarity and sel.rarity.color or Color.hex("#2d3554"))
   lg.rectangle("line", card.x, card.y, card.w, card.h, 8, 8)
 
   if sel then
+    local rarName = sel.rarity and i18n:pick(sel.rarity.name) or ""
+    local famName = (sel.family and Units.FAMILIES[sel.family]) and i18n:pick(Units.FAMILIES[sel.family].name) or ""
     lg.setFont(self.fonts.f14)
     lg.setColor(sel.accent)
-    lg.print(i18n:pick(sel.name) .. "  [" .. tostring(sel.tier) .. "*]", card.x + 12, card.y + 10)
+    lg.print("[" .. rarName .. "] " .. i18n:pick(sel.name) .. " (" .. sel.tier .. "*)", card.x + 10, card.y + 8)
 
     local needed = Units.xpNeededForTier(sel.tier)
-    local xpTxt = (sel.tier >= 3) and "MAX" or (t("xpLabel") .. ": " .. sel.xp .. "/" .. needed)
-    lg.setFont(self.fonts.f12)
+    local xpTxt = (sel.tier >= 3) and "MAX" or (t("xpLabel") .. " " .. sel.xp .. "/" .. needed)
+    lg.setFont(self.fonts.f11)
     lg.setColor(Color.hex("#94a3b8"))
-    lg.printf(xpTxt, card.x, card.y + 12, card.w - 12, "right")
+    lg.printf(xpTxt, card.x, card.y + 10, card.w - 10, "right")
+
+    lg.setFont(self.fonts.f12)
+    lg.setColor(Color.hex("#cbd5e1"))
+    local bonusTxt = sel.bonusTrait and (" | " .. i18n:pick(sel.bonusTrait)) or ""
+    lg.print(famName .. bonusTxt .. " | " .. t("kills") .. ": " .. (sel.kills or 0), card.x + 10, card.y + 30)
 
     lg.setColor(Color.hex("#e2e8f0"))
     lg.print(
-      t("hp") .. ": " .. math.floor(sel.hp + 0.5) .. "/" .. sel.maxHp .. "  " .. t("atk") .. ": " .. sel.atk .. "  " .. t("aspd") .. ": " .. sel.aspd,
-      card.x + 12,
-      card.y + 34
+      t("hp") .. ":" .. math.floor(sel.hp + 0.5) .. "/" .. sel.maxHp .. "  " .. t("atk") .. ":" .. sel.atk .. "  " .. t("aspd") .. ":" .. sel.aspd,
+      card.x + 10,
+      card.y + 50
     )
-    lg.setColor(Color.hex("#a5b4fc"))
-    lg.printf(i18n:pick(sel.traits), card.x + 12, card.y + 54, card.w - 24, "left")
 
-    local feedBtn = { x = card.x + 10, y = card.y + 82, w = 162, h = 34 }
+    lg.setColor(Color.hex("#a5b4fc"))
+    lg.printf(i18n:pick(sel.traits), card.x + 10, card.y + 70, card.w - 20, "left")
+
+    local feedBtn = { x = card.x + 10, y = card.y + 120, w = 162, h = 34 }
     self:drawButton(feedBtn, state.feedMode and t("cancelFeed") or t("feedMode"), {
       active = state.feedMode,
-      disabled = (#state.roster < 2) or (state.coreModal ~= nil) or (state.classModal ~= nil),
+      disabled = (#state.roster < 2) or (modalBlocked ~= nil),
       bg = Color.hex("#312e81"),
       border = Color.hex("#818cf8"),
       font = self.fonts.f13,
@@ -473,7 +521,7 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
     registerHit("toggle_feed", feedBtn)
 
     local sellGain = math.floor((sel.sellGold or 6) * sel.tier + 0.5)
-    local dismissBtn = { x = card.x + 180, y = card.y + 82, w = 138, h = 34 }
+    local dismissBtn = { x = card.x + 180, y = card.y + 120, w = 138, h = 34 }
     self:drawButton(dismissBtn, t("dismissUnit") .. " +" .. sellGain .. "g", {
       disabled = (#state.roster <= 1) or state.waveActive,
       bg = Color.hex("#4c1d24"),
@@ -486,62 +534,105 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
 
   -- Active Cores Summary Bar
   lg.setColor(Color.hex("#121524"))
-  lg.rectangle("fill", 34, 622, 328, 68, 8, 8)
+  lg.rectangle("fill", 34, 622, 328, 70, 8, 8)
   lg.setColor(Color.hex("#2d3554"))
-  lg.rectangle("line", 34, 622, 328, 68, 8, 8)
+  lg.rectangle("line", 34, 622, 328, 70, 8, 8)
 
   lg.setFont(self.fonts.f11)
   lg.setColor(Color.hex("#94a3b8"))
-  lg.print(t("coresBar") .. " (" .. #state.cores .. ")", 46, 630)
+  lg.print(t("coresBar") .. " (" .. #state.cores .. ")", 44, 628)
 
   if #state.cores == 0 then
     lg.setFont(self.fonts.f12)
     lg.setColor(Color.hex("#475569"))
-    lg.print(t("noCores"), 46, 654)
+    lg.print(t("noCores"), 44, 654)
   else
     for idx = 1, math.min(6, #state.cores) do
       local core = state.cores[idx]
-      local bx = 46 + (idx - 1) * 51
-      local by = 650
+      local bx = 44 + (idx - 1) * 51
+      local by = 648
       lg.setColor(Color.hex("#1e2438"))
-      lg.rectangle("fill", bx, by, 45, 28, 5, 5)
+      lg.rectangle("fill", bx, by, 45, 32, 5, 5)
       lg.setColor(core.color)
-      lg.rectangle("line", bx, by, 45, 28, 5, 5)
-      drawCenteredText(self.fonts.f11, core.badge, bx, by, 45, 28, core.color)
+      lg.rectangle("line", bx, by, 45, 32, 5, 5)
+      drawCenteredText(self.fonts.f11, core.badge, bx, by, 45, 32, core.color)
     end
   end
 end
 
-function Renderer:renderArena(state, i18n, time, registerHit, hoverPos)
+function Renderer:renderArena(state, i18n, time, registerHit, hoverPos, dragState)
   local lg = love.graphics
   local function t(k) return i18n:t(k) end
   local A = Battle.ARENA
 
-  lg.setColor(Color.hex("#151d24"))
+  lg.setColor(Color.hex("#141c23"))
   lg.rectangle("fill", A.x, A.y, A.w, A.h, 10, 10)
   lg.setLineWidth(2)
   lg.setColor(Color.hex("#333c5c"))
   lg.rectangle("line", A.x, A.y, A.w, A.h, 10, 10)
   lg.setLineWidth(1)
 
-  -- Subtle tactical lanes
+  -- Subtle tactical stone grid
   lg.setColor(1, 1, 1, 0.025)
-  local laneH = (A.h - 40) / 6
+  local laneH = (A.h - 60) / 6
   for i = 0, 5, 2 do
-    lg.rectangle("fill", A.x + 42, A.y + 20 + i * laneH, A.w - 50, laneH)
+    lg.rectangle("fill", A.x + 42, A.y + 40 + i * laneH, A.w - 50, laneH)
   end
 
-  -- Castle wall
+  -- Top Synergy Bar inside Arena
+  local synX = A.x + 48
+  local synY = A.y + 6
+  lg.setFont(self.fonts.f11)
+  local famOrder = { "ironbound", "sylvan", "arcane", "undead", "royal" }
+  for _, famId in ipairs(famOrder) do
+    local fam = Units.FAMILIES[famId]
+    local cnt = (state.synergies and state.synergies.counts and state.synergies.counts[famId]) or 0
+    local active = cnt >= fam.threshold
+    lg.setColor(active and Color.hex("#1e293b") or Color.hex("#0f172a"))
+    lg.rectangle("fill", synX, synY, 106, 22, 4, 4)
+    lg.setColor(active and fam.color or Color.hex("#334155"))
+    lg.rectangle("line", synX, synY, 106, 22, 4, 4)
+    drawCenteredText(self.fonts.f11, i18n:pick(fam.name) .. " " .. cnt .. "/" .. fam.threshold, synX, synY, 106, 22, active and fam.color or Color.hex("#64748b"))
+    synX = synX + 112
+  end
+
+  -- Next Wave Preview Badge during spin
+  if state.phase == "spin" and state.wavePlan then
+    local pw = 236
+    local px = A.x + A.w - pw - 10
+    local isBoss = state.wavePlan.isBossWave
+    lg.setColor(isBoss and Color.hex("#4c0519") or Color.hex("#172554"))
+    lg.rectangle("fill", px, synY, pw, 22, 4, 4)
+    lg.setColor(isBoss and Color.hex("#fb7185") or Color.hex("#60a5fa"))
+    lg.rectangle("line", px, synY, pw, 22, 4, 4)
+    local txt = t("nextWave") .. ": " .. #state.wavePlan.spawns .. (isBoss and (" [" .. t("bossTag") .. "]") or "")
+    drawCenteredText(self.fonts.f11, txt, px, synY, pw, 22, isBoss and Color.hex("#fde047") or Color.hex("#bfdbfe"))
+  end
+
+  -- Castle Wall + Battlements + Banner
   lg.setColor(Color.hex("#334155"))
   lg.rectangle("fill", A.x + 2, A.y + 8, 36, A.h - 16)
   lg.setColor(Color.hex("#475569"))
   for y = A.y + 18, A.y + A.h - 24, 36 do
     lg.rectangle("fill", A.x + 32, y, 10, 20)
   end
+  -- Waving Royal Banner
+  local waveOff = math.sin(time * 4) * 3
+  lg.setColor(Color.hex("#b91c1c"))
+  lg.polygon("fill", A.x + 12, A.y + 40, A.x + 30 + waveOff, A.y + 46, A.x + 12, A.y + 58)
   lg.setColor(Color.hex("#64748b"))
   lg.setLineWidth(2)
   lg.line(A.castleX, A.y + 6, A.castleX, A.y + A.h - 6)
   lg.setLineWidth(1)
+
+  -- Ground Craters first
+  for _, v in ipairs(state.vfx) do
+    if v.kind == "crater" then
+      local alpha = math.max(0, (v.life / v.maxLife) * 0.55)
+      lg.setColor(v.color[1], v.color[2], v.color[3], alpha)
+      lg.ellipse("fill", v.x, v.y, v.radius, v.radius * 0.45)
+    end
+  end
 
   -- Meteors
   for _, m in ipairs(state.meteors) do
@@ -577,8 +668,8 @@ function Renderer:renderArena(state, i18n, time, registerHit, hoverPos)
       local isSac = (u.id == state.feedSacrificeId)
       if isSel or isSac or (state.feedMode and not u.isSummon and u.tier < 3) then
         lg.setColor(isSac and Color.hex("#f43f5e") or ((state.feedMode and state.feedSacrificeId) and Color.hex("#4ade80") or Color.hex("#ffdf6b")))
-        lg.setLineWidth(2.5)
-        lg.circle("line", u.x, u.y, (u.radius or 15) + 6)
+        lg.setLineWidth(2.2)
+        lg.circle("line", u.x, u.y, (u.radius or 15) + 7)
         lg.setLineWidth(1)
       end
 
@@ -596,58 +687,86 @@ function Renderer:renderArena(state, i18n, time, registerHit, hoverPos)
       if e.isBoss then
         lg.setFont(self.fonts.f12)
         lg.setColor(Color.hex("#ffbe0b"))
-        lg.printf(i18n:pick(e.name), e.x - 100, e.y - e.radius - 26, 200, "center")
+        lg.printf(i18n:pick(e.name), e.x - 100, e.y - e.radius - 28, 200, "center")
       end
     end
   end
 
-  -- Projectiles
+  -- Drag-and-drop visual indicator
+  if dragState and dragState.active then
+    local srcUnit = nil
+    for _, u in ipairs(state.roster) do
+      if u.id == dragState.unitId then srcUnit = u; break end
+    end
+    if srcUnit then
+      lg.setColor(1, 0.87, 0.42, 0.75)
+      lg.setLineWidth(2)
+      lg.line(srcUnit.x, srcUnit.y, dragState.curX, dragState.curY)
+      lg.circle("line", dragState.curX, dragState.curY, 18)
+      lg.setLineWidth(1)
+    end
+  end
+
+  -- Directional Projectiles
   for _, p in ipairs(state.projectiles) do
     lg.setColor(p.color)
-    lg.circle("fill", p.x, p.y, p.radius)
+    if p.kind == "arrow" then
+      lg.push()
+      lg.translate(p.x, p.y)
+      lg.rotate(p.angle or 0)
+      lg.setLineWidth(2.5)
+      lg.line(-7, 0, 7, 0)
+      lg.polygon("fill", 9, 0, 3, -3, 3, 3)
+      lg.pop()
+      lg.setLineWidth(1)
+    else
+      lg.circle("fill", p.x, p.y, p.radius)
+    end
   end
 
   -- VFX
   for _, v in ipairs(state.vfx) do
-    local alpha = math.max(0, v.life / v.maxLife)
-    lg.setColor(v.color[1], v.color[2], v.color[3], alpha)
-    if v.kind == "particle" then
-      lg.rectangle("fill", v.x - v.size / 2, v.y - v.size / 2, v.size, v.size)
-    elseif v.kind == "ring" then
-      lg.setLineWidth(3)
-      lg.circle("line", v.x, v.y, v.radius * (1 - alpha * 0.4))
-    elseif v.kind == "slash" then
-      lg.setLineWidth(3)
-      lg.arc("line", "open", v.x, v.y, v.radius, -0.9, 0.9)
-    elseif v.kind == "beam" then
-      lg.setLineWidth(2.5)
-      lg.line(v.x1, v.y1, v.x2, v.y2)
+    if v.kind ~= "crater" then
+      local alpha = math.max(0, v.life / v.maxLife)
+      lg.setColor(v.color[1], v.color[2], v.color[3], alpha)
+      if v.kind == "particle" then
+        lg.rectangle("fill", v.x - v.size / 2, v.y - v.size / 2, v.size, v.size)
+      elseif v.kind == "ring" then
+        lg.setLineWidth(3)
+        lg.circle("line", v.x, v.y, v.radius * (1 - alpha * 0.4))
+      elseif v.kind == "slash" then
+        lg.setLineWidth(3)
+        lg.arc("line", "open", v.x, v.y, v.radius, -0.9, 0.9)
+      elseif v.kind == "beam" then
+        lg.setLineWidth(2.5)
+        lg.line(v.x1, v.y1, v.x2, v.y2)
+      end
     end
   end
   lg.setLineWidth(1)
 
   if state.feedMode then
     local msg = state.feedSacrificeId and t("selectTarget") or t("selectSacrifice")
-    lg.setColor(0.12, 0.11, 0.29, 0.9)
-    lg.rectangle("fill", A.x + 170, A.y + 12, 520, 34, 8, 8)
+    lg.setColor(0.12, 0.11, 0.29, 0.92)
+    lg.rectangle("fill", A.x + 140, A.y + 34, 580, 32, 8, 8)
     lg.setColor(Color.hex("#818cf8"))
     lg.setLineWidth(2)
-    lg.rectangle("line", A.x + 170, A.y + 12, 520, 34, 8, 8)
+    lg.rectangle("line", A.x + 140, A.y + 34, 580, 32, 8, 8)
     lg.setLineWidth(1)
-    drawCenteredText(self.fonts.f13, msg .. " - " .. t("feedModeHint"), A.x + 170, A.y + 12, 520, 34, Color.hex("#e0e7ff"))
+    drawCenteredText(self.fonts.f12, msg .. " - " .. t("feedModeHint"), A.x + 140, A.y + 34, 580, 32, Color.hex("#e0e7ff"))
   end
 
   if state.bossBannerTimer > 0 then
     lg.setColor(0.62, 0.07, 0.22, 0.9)
-    lg.rectangle("fill", A.x + 250, A.y + 56, 360, 36, 8, 8)
-    drawCenteredText(self.fonts.f16, t("bossWarning"), A.x + 250, A.y + 56, 360, 36, Color.hex("#fde047"))
+    lg.rectangle("fill", A.x + 250, A.y + 72, 360, 36, 8, 8)
+    drawCenteredText(self.fonts.f16, t("bossWarning"), A.x + 250, A.y + 72, 360, 36, Color.hex("#fde047"))
   end
 end
 
 function Renderer:renderRosterStrip(state, i18n, registerHit, hoverPos)
   local lg = love.graphics
   local A = Battle.ARENA
-  local strip = { x = A.x, y = 638, w = A.w, h = 66 }
+  local strip = { x = A.x, y = 638, w = A.w, h = 68 }
 
   lg.setColor(Color.hex("#191d30"))
   lg.rectangle("fill", strip.x, strip.y, strip.w, strip.h, 8, 8)
@@ -661,18 +780,19 @@ function Renderer:renderRosterStrip(state, i18n, registerHit, hoverPos)
     return
   end
 
-  local slotW = 82
+  local count = #state.roster
+  local slotW = math.min(82, math.floor((strip.w - 20 - (count - 1) * 4) / math.max(1, count)))
   for idx, u in ipairs(state.roster) do
     local rx = strip.x + 10 + (idx - 1) * (slotW + 4)
     local ry = strip.y + 8
-    local rect = { x = rx, y = ry, w = slotW, h = 50 }
+    local rect = { x = rx, y = ry, w = slotW, h = 52 }
     local isSel = (u.id == state.selectedUnitId)
     local isSac = (u.id == state.feedSacrificeId)
 
     lg.setColor(isSac and Color.hex("#4c1d24") or (isSel and Color.hex("#2a3457") or (isHover(hoverPos, rect) and Color.hex("#222944") or Color.hex("#121524"))))
     lg.rectangle("fill", rect.x, rect.y, rect.w, rect.h, 6, 6)
     lg.setLineWidth((isSel or isSac) and 2 or 1)
-    lg.setColor(isSac and Color.hex("#fb7185") or (isSel and Color.hex("#ffdf6b") or Color.hex("#334155")))
+    lg.setColor(isSac and Color.hex("#fb7185") or (isSel and Color.hex("#ffdf6b") or (u.rarity and u.rarity.color or Color.hex("#334155"))))
     lg.rectangle("line", rect.x, rect.y, rect.w, rect.h, 6, 6)
     lg.setLineWidth(1)
 
@@ -680,10 +800,81 @@ function Renderer:renderRosterStrip(state, i18n, registerHit, hoverPos)
     lg.setColor(u.accent)
     lg.printf(i18n:pick(u.name), rx + 2, ry + 5, slotW - 4, "center")
 
-    Sprites.drawTierPips(rx + slotW / 2, ry + 27, u.tier)
-    drawHealthBar(rx + 8, ry + 39, slotW - 16, 4, u.hp / u.maxHp, Color.hex("#4ade80"))
+    Sprites.drawTierPips(rx + slotW / 2, ry + 28, u.tier)
+    drawHealthBar(rx + 6, ry + 41, slotW - 12, 4, u.hp / u.maxHp, Color.hex("#4ade80"))
     registerHit("unit_card", rect, { unitId = u.id })
   end
+end
+
+function Renderer:renderShopModal(state, i18n, registerHit, hoverPos)
+  local lg = love.graphics
+  local function t(k) return i18n:t(k) end
+
+  lg.setColor(0.03, 0.04, 0.07, 0.84)
+  lg.rectangle("fill", 0, 0, 1280, 720)
+
+  lg.setColor(Color.hex("#181c2e"))
+  lg.rectangle("fill", 160, 100, 960, 520, 14, 14)
+  lg.setLineWidth(3)
+  lg.setColor(Color.hex("#facc15"))
+  lg.rectangle("line", 160, 100, 960, 520, 14, 14)
+  lg.setLineWidth(1)
+
+  lg.setFont(self.fonts.f28)
+  lg.setColor(Color.hex("#fde047"))
+  lg.printf(t("shopTitle"), 160, 126, 960, "center")
+
+  lg.setFont(self.fonts.f14)
+  lg.setColor(Color.hex("#cbd5e1"))
+  lg.printf(t("shopSub") .. "  (" .. t("gold") .. ": " .. state.gold .. "g)", 160, 166, 960, "center")
+
+  for idx, upg in ipairs(Upgrades.SHOP_UPGRADES) do
+    local col = (idx - 1) % 3
+    local row = math.floor((idx - 1) / 3)
+    local card = { x = 196 + col * 304, y = 210 + row * 170, w = 284, h = 152 }
+    local lvl = state.upgradeLevels[upg.id] or 0
+    local maxed = lvl >= upg.maxLevel
+    local cost = Upgrades.getCost(upg, lvl)
+    local canBuy = (not maxed) and (state.gold >= cost)
+    local hov = canBuy and isHover(hoverPos, card)
+
+    lg.setColor(hov and Color.hex("#262d47") or Color.hex("#121524"))
+    lg.rectangle("fill", card.x, card.y, card.w, card.h, 10, 10)
+    lg.setLineWidth(hov and 2.5 or 1.5)
+    lg.setColor(maxed and Color.hex("#475569") or (canBuy and upg.color or Color.hex("#334155")))
+    lg.rectangle("line", card.x, card.y, card.w, card.h, 10, 10)
+    lg.setLineWidth(1)
+
+    lg.setFont(self.fonts.f15)
+    lg.setColor(upg.color)
+    lg.print(i18n:pick(upg.name), card.x + 14, card.y + 14)
+
+    lg.setFont(self.fonts.f12)
+    lg.setColor(Color.hex("#94a3b8"))
+    lg.printf("Lv." .. lvl .. "/" .. upg.maxLevel, card.x, card.y + 16, card.w - 14, "right")
+
+    lg.setFont(self.fonts.f13)
+    lg.setColor(Color.hex("#e2e8f0"))
+    lg.printf(i18n:pick(upg.desc), card.x + 14, card.y + 48, card.w - 28, "left")
+
+    local priceBtn = { x = card.x + 14, y = card.y + 106, w = card.w - 28, h = 34 }
+    self:drawButton(priceBtn, maxed and t("maxed") or (tostring(cost) .. "g"), {
+      disabled = not canBuy,
+      bg = Color.hex("#1e3a2f"),
+      border = upg.color,
+      font = self.fonts.f14,
+      hovered = hov,
+    })
+    registerHit("buy_upgrade", card, { upgId = upg.id })
+  end
+
+  local closeBtn = { x = 540, y = 558, w = 200, h = 44 }
+  self:drawButton(closeBtn, t("close"), {
+    bg = Color.hex("#334155"),
+    border = Color.hex("#94a3b8"),
+    hovered = isHover(hoverPos, closeBtn),
+  })
+  registerHit("toggle_shop", closeBtn)
 end
 
 function Renderer:renderCoreModal(state, i18n, registerHit, hoverPos)
@@ -718,7 +909,6 @@ function Renderer:renderCoreModal(state, i18n, registerHit, hoverPos)
     lg.rectangle("line", card.x, card.y, card.w, card.h, 10, 10)
     lg.setLineWidth(1)
 
-    -- Emblem badge
     lg.setColor(Color.hex("#1e2438"))
     lg.circle("fill", card.x + card.w / 2, card.y + 56, 28)
     lg.setLineWidth(2)

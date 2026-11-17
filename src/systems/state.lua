@@ -1,22 +1,28 @@
 local Units = require("src.data.units")
 local CORES = require("src.data.cores")
+local Upgrades = require("src.data.upgrades")
 local Waves = require("src.data.waves")
 local SlotMod = require("src.systems.slot_machine")
 local Battle = require("src.systems.battle")
 local Color = require("src.utils.color")
 
 local M = {}
-M.MAX_ROSTER = 10
+M.LOCK_REEL_COST = 3
 
-function M.createUnitInstance(baseId, tierOverride)
+function M.createUnitInstance(baseId, tierOverride, rarityOverride, prismBonus)
   local tpl = Units.BASE_UNITS[baseId]
   local tier = tierOverride or tpl.startingTier or 1
-  local mult = (tier == 2) and 1.55 or 1.0
+  local tierMult = (tier == 2) and 1.55 or 1.0
+  local rarity = rarityOverride or Units.rollRarity(prismBonus)
+  local mult = tierMult * rarity.statMult
 
-  return {
+  local unit = {
     id = Battle.genId("unit"),
     baseId = tpl.id,
+    family = tpl.family,
     classId = nil,
+    rarity = rarity,
+    bonusTrait = nil,
     name = tpl.name,
     role = tpl.role,
     laneX = tpl.laneX,
@@ -25,7 +31,7 @@ function M.createUnitInstance(baseId, tierOverride)
     hp = math.floor(tpl.hp * mult + 0.5),
     maxHp = math.floor(tpl.hp * mult + 0.5),
     atk = math.floor(tpl.atk * mult + 0.5),
-    aspd = tpl.aspd,
+    aspd = math.floor(tpl.aspd * (1 + (rarity.statMult - 1) * 0.3) * 100 + 0.5) / 100,
     range = tpl.range,
     speed = tpl.speed,
     color = tpl.color,
@@ -39,6 +45,7 @@ function M.createUnitInstance(baseId, tierOverride)
     critChance = tpl.critChance or 0,
     summonOnKill = tpl.summonOnKill or false,
     summonCount = tpl.summonCount or 1,
+    goldOnKill = tpl.goldOnKill or 0,
     thorns = 0,
     healOnHit = 0,
     lifesteal = 0,
@@ -46,8 +53,8 @@ function M.createUnitInstance(baseId, tierOverride)
     multishot = 0,
     chainTargets = 0,
     meteorEvery = 0,
-    sellGold = tpl.sellGold,
-    xpValue = tpl.xpValue,
+    sellGold = tpl.sellGold + rarity.xpBonus * 3,
+    xpValue = tpl.xpValue + rarity.xpBonus,
     traits = tpl.traits,
     branches = tpl.branches,
     kills = 0,
@@ -61,8 +68,17 @@ function M.createUnitInstance(baseId, tierOverride)
     y = 340,
     homeX = 500,
     homeY = 340,
+    customPositioned = false,
     inBattlePosInitialized = false,
   }
+
+  if rarity.id ~= "normal" then
+    local tr = Units.BONUS_TRAITS[math.random(1, #Units.BONUS_TRAITS)]
+    unit.bonusTrait = tr.name
+    tr.apply(unit)
+  end
+
+  return unit
 end
 
 local GameState = {}
@@ -77,11 +93,13 @@ function GameState.new(audio)
     fastForward = false,
     paused = false,
 
-    gold = 38,
+    gold = 42,
     hearts = 10,
     maxHearts = 10,
     nudges = 2,
     nudgesPerWave = 2,
+    maxRoster = 8,
+    prismBonus = 0,
 
     baseSpinCost = 5,
     spinCostStep = 3,
@@ -100,8 +118,11 @@ function GameState.new(audio)
     floatingTexts = {},
 
     cores = {},
+    upgradeLevels = {},
+    synergies = { counts = {} },
     coreModal = nil,
     classModal = nil,
+    shopModal = false,
 
     selectedUnitId = nil,
     feedMode = false,
@@ -125,6 +146,10 @@ function GameState:hasCore(coreId)
   return false
 end
 
+function GameState:refreshSynergies()
+  self.synergies = Battle.computeSynergies(self.roster)
+end
+
 function GameState:rebuildReels()
   self.slot:rebuild(self.symbolWeights)
 end
@@ -141,11 +166,13 @@ function GameState:startRun()
   self.wave = 1
   self.waveActive = false
   self.paused = false
-  self.gold = 38
+  self.gold = 42
   self.hearts = 10
   self.maxHearts = 10
   self.nudgesPerWave = 2
   self.nudges = 2
+  self.maxRoster = 8
+  self.prismBonus = 0
   self.baseSpinCost = 5
   self.spinCostStep = 3
   self.spinsThisWave = 0
@@ -153,8 +180,13 @@ function GameState:startRun()
   self.symbolWeights = {}
   self.slot = SlotMod.SlotMachine.new(self.symbolWeights)
 
-  self.roster = { M.createUnitInstance("warrior"), M.createUnitInstance("ranger") }
+  self.roster = {
+    M.createUnitInstance("warrior", 1, Units.RARITIES.normal, 0),
+    M.createUnitInstance("ranger", 1, Units.RARITIES.normal, 0),
+  }
   Battle.assignFormationPositions(self.roster)
+  self:refreshSynergies()
+
   self.summons = {}
   self.enemies = {}
   self.projectiles = {}
@@ -162,13 +194,15 @@ function GameState:startRun()
   self.vfx = {}
   self.floatingTexts = {}
   self.cores = {}
+  self.upgradeLevels = {}
   self.coreModal = nil
   self.classModal = nil
+  self.shopModal = false
   self.selectedUnitId = self.roster[1].id
   self.feedMode = false
   self.feedSacrificeId = nil
   self.totalKills = 0
-  self.wavePlan = nil
+  self.wavePlan = Waves.buildWavePlan(1)
   self.waveElapsed = 0
   self.spawnCursor = 1
   self.jackpotFlash = 0
@@ -179,6 +213,7 @@ function GameState:canSpin()
   return (self.phase == "spin" or self.phase == "battle")
     and not self.coreModal
     and not self.classModal
+    and not self.shopModal
     and not self.slot.spinning
     and self.gold >= self:currentSpinCost()
 end
@@ -192,9 +227,35 @@ function GameState:spin()
   return true
 end
 
+function GameState:toggleReelLock(col)
+  if (self.phase ~= "spin" and self.phase ~= "battle")
+     or self.coreModal or self.classModal or self.shopModal or self.slot.spinning then
+    return false
+  end
+  if col < 1 or col > 3 then return false end
+  if self.slot.locked[col] then
+    self.slot.locked[col] = false
+    self.gold = self.gold + M.LOCK_REEL_COST
+    self.audio:playNudge()
+    return true
+  end
+  -- Allow locking up to 2 columns so at least 1 spins
+  local lockedCount = 0
+  for i = 1, 3 do
+    if self.slot.locked[i] then lockedCount = lockedCount + 1 end
+  end
+  if lockedCount >= 2 or self.gold < M.LOCK_REEL_COST then
+    return false
+  end
+  self.gold = self.gold - M.LOCK_REEL_COST
+  self.slot.locked[col] = true
+  self.audio:playReelStop(col - 1)
+  return true
+end
+
 function GameState:nudgeReel(col, dir)
   if (self.phase ~= "spin" and self.phase ~= "battle")
-     or self.coreModal or self.classModal or self.slot.spinning or self.nudges <= 0 then
+     or self.coreModal or self.classModal or self.shopModal or self.slot.spinning or self.nudges <= 0 then
     return false
   end
   if self.slot:nudge(col, dir) then
@@ -217,7 +278,7 @@ function GameState:applySlotMatches()
     local mult = (jesterActive and m.isDiagonal) and 2 or 1
     if m.isPureJackpot then
       triggeredJackpot = true
-      local goldGain = (m.symbol.payoutGold or 15) * mult
+      local goldGain = (m.symbol.payoutGold or 18) * mult
       self.gold = self.gold + goldGain
       for _ = 1, mult do
         self:summonUnit("champion")
@@ -231,8 +292,9 @@ function GameState:applySlotMatches()
       for _ = 1, mult do
         self:summonUnit(m.symbol.unitId)
       end
-      if m.crownCount > 0 then
-        self.gold = self.gold + 6 * m.crownCount
+      local wildBonus = (m.crownCount or 0) * 6 + (m.jesterCount or 0) * 4
+      if wildBonus > 0 then
+        self.gold = self.gold + wildBonus
       end
     elseif m.symbol.payoutGold > 0 then
       local gain = m.symbol.payoutGold * mult
@@ -258,15 +320,24 @@ function GameState:applySlotMatches()
 end
 
 function GameState:summonUnit(baseId)
-  if #self.roster < M.MAX_ROSTER then
-    local unit = M.createUnitInstance(baseId)
+  if #self.roster < self.maxRoster then
+    local unit = M.createUnitInstance(baseId, nil, nil, self.prismBonus)
     self.roster[#self.roster + 1] = unit
     Battle.assignFormationPositions(self.roster)
+    self:refreshSynergies()
     self.selectedUnitId = unit.id
+
+    local label = "+" .. unit.name.zh
+    if unit.rarity.id == "prism" then
+      label = "PRISM " .. label
+      self.jackpotFlash = math.max(self.jackpotFlash, 0.45)
+    elseif unit.rarity.id == "epic" then
+      label = "EPIC " .. label
+    end
     self.floatingTexts[#self.floatingTexts + 1] = {
       x = unit.x, y = unit.y - 26, vy = -28,
-      text = "+" .. unit.name.zh,
-      color = unit.accent, life = 0.9, maxLife = 0.9, scale = 1.05,
+      text = label,
+      color = unit.rarity.color, life = 1.0, maxLife = 1.0, scale = 1.1,
     }
     return unit
   end
@@ -296,6 +367,22 @@ function GameState:summonUnit(baseId)
   return nil
 end
 
+function GameState:setUnitPosition(unitId, x, y)
+  for _, u in ipairs(self.roster) do
+    if u.id == unitId then
+      local clampedX = math.max(Battle.ARENA.castleX + 34, math.min(Battle.ARENA.rightBound - 80, x))
+      local clampedY = math.max(Battle.ARENA.minY + 10, math.min(Battle.ARENA.maxY - 10, y))
+      u.homeX = clampedX
+      u.homeY = clampedY
+      u.x = clampedX
+      u.y = clampedY
+      u.customPositioned = true
+      return true
+    end
+  end
+  return false
+end
+
 function GameState:grantUnitXp(target, amount)
   if not target or target.tier >= 3 then return end
   target.xp = target.xp + amount
@@ -316,6 +403,10 @@ function GameState:grantUnitXp(target, amount)
         text = "2-STAR!",
         color = Color.hex("#ffdf6b"), life = 1.15, maxLife = 1.15, scale = 1.25,
       }
+      -- Check if excess xp immediately hits tier 3
+      if target.xp >= Units.xpNeededForTier(2) then
+        self:grantUnitXp(target, 0)
+      end
     elseif target.tier == 3 then
       target.xp = 0
       local branchIds = target.branches or { "paladin", "berserker" }
@@ -348,9 +439,16 @@ function GameState:absorbUnit(sacrificeId, targetId)
   if bloodPact then
     tgt.atk = math.floor(tgt.atk * 1.18 + 0.5)
   end
+  if sac.rarity and sac.rarity.id == "prism" and tgt.rarity and tgt.rarity.id ~= "prism" then
+    tgt.rarity = sac.rarity
+    tgt.maxHp = math.floor(tgt.maxHp * 1.25 + 0.5)
+    tgt.hp = tgt.maxHp
+    tgt.atk = math.floor(tgt.atk * 1.2 + 0.5)
+  end
 
   table.remove(self.roster, sacIdx)
   Battle.assignFormationPositions(self.roster)
+  self:refreshSynergies()
   self.selectedUnitId = tgt.id
   self.feedSacrificeId = nil
   self.feedMode = false
@@ -372,6 +470,7 @@ function GameState:dismissUnit(unitId)
       self.gold = self.gold + gain
       table.remove(self.roster, i)
       Battle.assignFormationPositions(self.roster)
+      self:refreshSynergies()
       self.selectedUnitId = self.roster[1] and self.roster[1].id or nil
       self.audio:playCoin()
       return true
@@ -417,6 +516,7 @@ function GameState:chooseClass(classId)
   if cls.overdriveOnKill then unit.overdriveOnKill = true end
   if cls.summonOnKill then unit.summonOnKill = true end
   if cls.summonCount then unit.summonCount = cls.summonCount end
+  if cls.goldOnKill then unit.goldOnKill = (unit.goldOnKill or 0) + cls.goldOnKill end
   if cls.multishot then unit.multishot = cls.multishot end
   if cls.chainTargets then unit.chainTargets = cls.chainTargets end
   if cls.meteorEvery then unit.meteorEvery = cls.meteorEvery end
@@ -424,8 +524,27 @@ function GameState:chooseClass(classId)
   unit.radius = 19
 
   Battle.assignFormationPositions(self.roster)
+  self:refreshSynergies()
   self.classModal = nil
   self.audio:playJackpot()
+  return true
+end
+
+function GameState:buyUpgrade(upgId)
+  local upg = nil
+  for _, u in ipairs(Upgrades.SHOP_UPGRADES) do
+    if u.id == upgId then upg = u; break end
+  end
+  if not upg then return false end
+  local lvl = self.upgradeLevels[upgId] or 0
+  if lvl >= upg.maxLevel then return false end
+  local cost = Upgrades.getCost(upg, lvl)
+  if self.gold < cost then return false end
+
+  self.gold = self.gold - cost
+  self.upgradeLevels[upgId] = lvl + 1
+  upg.apply(self)
+  self.audio:playEvolve()
   return true
 end
 
@@ -465,18 +584,19 @@ function GameState:chooseCore(coreId)
 end
 
 function GameState:startWave()
-  if self.phase ~= "spin" or self.coreModal or self.classModal then return false end
+  if self.phase ~= "spin" or self.coreModal or self.classModal or self.shopModal then return false end
   self.phase = "battle"
   self.waveActive = true
   self.feedMode = false
   self.feedSacrificeId = nil
-  self.wavePlan = Waves.buildWavePlan(self.wave)
+  self.wavePlan = self.wavePlan or Waves.buildWavePlan(self.wave)
   self.waveElapsed = 0
   self.spawnCursor = 1
   self.summons = {}
   self.projectiles = {}
   self.meteors = {}
   Battle.assignFormationPositions(self.roster)
+  self:refreshSynergies()
   return true
 end
 
@@ -508,7 +628,9 @@ function GameState:completeWave()
   self.wave = self.wave + 1
   self.spinsThisWave = 0
   self.nudges = self.nudgesPerWave
+  self.wavePlan = Waves.buildWavePlan(self.wave)
   self.phase = "spin"
+  self:refreshSynergies()
 
   if CORE_MILESTONES[clearedWave] then
     self:openCoreDraft()
@@ -542,11 +664,11 @@ function GameState:update(rawDt)
   end
   self.vfx = keptVfx
 
-  if self.paused or self.coreModal or self.classModal then
+  if self.paused or self.coreModal or self.classModal or self.shopModal then
     return
   end
 
-  if self.slot.spinning then
+  if self.slot.spinning or self.slot.reelBounce[1] > 0 or self.slot.reelBounce[2] > 0 or self.slot.reelBounce[3] > 0 then
     local res = self.slot:update(dt)
     if res.ticked then self.audio:playReelTick() end
     for _, col in ipairs(res.stoppedCols) do

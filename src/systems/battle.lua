@@ -36,14 +36,39 @@ local function addFloatingText(state, x, y, text, color, scale)
     vy = -34,
     text = text,
     color = color or { 1, 1, 1, 1 },
-    life = 0.75,
-    maxLife = 0.75,
+    life = 0.78,
+    maxLife = 0.78,
     scale = scale or 1,
   }
 end
 
 local function spawnVfx(state, vfx)
   state.vfx[#state.vfx + 1] = vfx
+end
+
+function M.computeSynergies(roster)
+  local counts = { ironbound = 0, sylvan = 0, arcane = 0, undead = 0, royal = 0 }
+  local seen = {}
+  for _, u in ipairs(roster) do
+    if u.family and counts[u.family] ~= nil then
+      local key = u.baseId .. "_" .. (u.classId or "")
+      if not seen[key] then
+        seen[key] = true
+        counts[u.family] = counts[u.family] + 1
+      else
+        -- Duplicate units still count half or full? Counting each unit makes Slotbound-style stacking super clear!
+        counts[u.family] = counts[u.family] + 1
+      end
+    end
+  end
+  return {
+    counts = counts,
+    ironbound = counts.ironbound >= 2,
+    sylvan = counts.sylvan >= 2,
+    arcane = counts.arcane >= 2,
+    undead = counts.undead >= 2,
+    royal = counts.royal >= 2,
+  }
 end
 
 function M.spawnEnemyFromPlan(entry)
@@ -80,11 +105,12 @@ end
 
 function M.spawnSkeletonAlly(x, y, waveScale)
   waveScale = waveScale or 1
-  local maxHp = math.floor(52 * (1 + (waveScale - 1) * 0.25) + 0.5)
-  local atk = math.floor(12 * (1 + (waveScale - 1) * 0.25) + 0.5)
+  local maxHp = math.floor(54 * (1 + (waveScale - 1) * 0.25) + 0.5)
+  local atk = math.floor(13 * (1 + (waveScale - 1) * 0.25) + 0.5)
   return {
     id = M.genId("skel"),
     baseId = "skeleton",
+    family = "undead",
     isSummon = true,
     name = { zh = "骷髅兵", en = "Skeleton" },
     role = "frontline",
@@ -96,8 +122,8 @@ function M.spawnSkeletonAlly(x, y, waveScale)
     maxHp = maxHp,
     atk = atk,
     aspd = 1.2,
-    range = 36,
-    speed = 92,
+    range = 38,
+    speed = 94,
     color = Color.hex("#cbd5e1"),
     accent = Color.hex("#64dfdf"),
     attackType = "melee",
@@ -123,16 +149,18 @@ function M.assignFormationPositions(roster)
   for _, list in pairs(groups) do
     local n = #list
     for i, u in ipairs(list) do
-      local frac = (n == 1) and 0.5 or ((i - 0.5) / n)
-      local laneX = M.ARENA.castleX + 46 + (u.laneX or 0.35) * (M.ARENA.w - 170)
-      local jitterX = (i % 2 == 1) and -12 or 12
-      local homeY = M.ARENA.minY + 18 + frac * (M.ARENA.maxY - M.ARENA.minY - 36)
-      u.homeX = math.max(M.ARENA.castleX + 36, math.min(M.ARENA.spawnX - 180, laneX + jitterX))
-      u.homeY = homeY
-      if not u.inBattlePosInitialized then
-        u.x = u.homeX
-        u.y = u.homeY
-        u.inBattlePosInitialized = true
+      if not u.customPositioned then
+        local frac = (n == 1) and 0.5 or ((i - 0.5) / n)
+        local laneX = M.ARENA.castleX + 46 + (u.laneX or 0.35) * (M.ARENA.w - 170)
+        local jitterX = (i % 2 == 1) and -12 or 12
+        local homeY = M.ARENA.minY + 18 + frac * (M.ARENA.maxY - M.ARENA.minY - 36)
+        u.homeX = math.max(M.ARENA.castleX + 36, math.min(M.ARENA.spawnX - 180, laneX + jitterX))
+        u.homeY = homeY
+        if not u.inBattlePosInitialized then
+          u.x = u.homeX
+          u.y = u.homeY
+          u.inBattlePosInitialized = true
+        end
       end
     end
   end
@@ -153,11 +181,13 @@ function M.callMeteor(state, targetX, targetY, damage, radius, attacker)
 end
 
 local function handleEnemyDeath(state, enemy, killer)
-  state.gold = state.gold + enemy.gold
+  local killerBonusGold = (killer and killer.goldOnKill) or 0
+  local totalGold = enemy.gold + killerBonusGold
+  state.gold = state.gold + totalGold
   state.totalKills = state.totalKills + 1
   state.audio:playCoin()
 
-  addFloatingText(state, enemy.x, enemy.y - 24, "+" .. tostring(enemy.gold) .. "g", Color.hex("#f6c945"), 1.05)
+  addFloatingText(state, enemy.x, enemy.y - 24, "+" .. tostring(totalGold) .. "g", Color.hex("#f6c945"), 1.05)
 
   local pCount = enemy.isBoss and 22 or 9
   for i = 1, pCount do
@@ -197,7 +227,7 @@ local function handleEnemyDeath(state, enemy, killer)
   end
 end
 
-local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback)
+local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback, synergies)
   if not enemy or enemy.hp <= 0 then return false end
   local dmg = math.max(1, math.floor(rawDmg + 0.5))
   enemy.hp = enemy.hp - dmg
@@ -218,11 +248,17 @@ local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback)
     isCrit and 1.25 or 1.0
   )
 
-  if attacker and attacker.lifesteal and attacker.lifesteal > 0 then
-    attacker.hp = math.min(attacker.maxHp, attacker.hp + math.floor(dmg * attacker.lifesteal + 0.5))
-  end
-  if attacker and attacker.healOnHit and attacker.healOnHit > 0 then
-    attacker.hp = math.min(attacker.maxHp, attacker.hp + attacker.healOnHit)
+  if attacker then
+    local ls = (attacker.lifesteal or 0)
+    if synergies and synergies.undead and attacker.family == "undead" then
+      ls = ls + 0.15
+    end
+    if ls > 0 then
+      attacker.hp = math.min(attacker.maxHp, attacker.hp + math.floor(dmg * ls + 0.5))
+    end
+    if attacker.healOnHit and attacker.healOnHit > 0 then
+      attacker.hp = math.min(attacker.maxHp, attacker.hp + attacker.healOnHit)
+    end
   end
 
   if enemy.hp <= 0 then
@@ -232,9 +268,10 @@ local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback)
   return false
 end
 
-local function damageAlly(state, ally, rawDmg, attacker)
+local function damageAlly(state, ally, rawDmg, attacker, synergies)
   if not ally or ally.hp <= 0 then return end
-  local dmg = math.max(1, math.floor(rawDmg + 0.5))
+  local reduction = (synergies and synergies.ironbound and ally.family == "ironbound") and 0.8 or 1.0
+  local dmg = math.max(1, math.floor(rawDmg * reduction + 0.5))
   ally.hp = ally.hp - dmg
   ally.hitFlash = 0.14
 
@@ -244,7 +281,7 @@ local function damageAlly(state, ally, rawDmg, attacker)
       thornsPct = thornsPct + 0.25
     end
     if thornsPct > 0 then
-      damageEnemy(state, attacker, dmg * thornsPct, ally, false, 0)
+      damageEnemy(state, attacker, dmg * thornsPct, ally, false, 0, synergies)
     end
   end
 
@@ -267,14 +304,17 @@ local function damageAlly(state, ally, rawDmg, attacker)
   end
 end
 
-local function performAllyAttack(state, unit, target)
+local function performAllyAttack(state, unit, target, synergies)
   unit.cooldown = 1 / unit.aspd
   unit.attackAnim = 0.18
   unit.attackCount = (unit.attackCount or 0) + 1
 
   local overdriveMult = (unit.overdriveTimer and unit.overdriveTimer > 0) and 1.35 or 1.0
-  local isCrit = math.random() < (unit.critChance or 0)
-  local dmg = unit.atk * overdriveMult * (isCrit and 1.75 or 1.0)
+  local royalMult = (synergies and synergies.royal) and 1.12 or 1.0
+  local arcaneMult = (synergies and synergies.arcane and unit.family == "arcane") and 1.25 or 1.0
+  local sylvanCrit = (synergies and synergies.sylvan and unit.family == "sylvan") and 0.15 or 0
+  local isCrit = math.random() < ((unit.critChance or 0) + sylvanCrit)
+  local dmg = unit.atk * overdriveMult * royalMult * arcaneMult * (isCrit and 1.75 or 1.0)
 
   if (unit.meteorEvery and unit.meteorEvery > 0 and unit.attackCount % unit.meteorEvery == 0)
      or (not unit.isSummon and state:hasCore("meteor_resonance") and unit.attackCount % 5 == 0) then
@@ -299,10 +339,12 @@ local function performAllyAttack(state, unit, target)
     state.projectiles[#state.projectiles + 1] = {
       fromEnemy = false,
       attacker = unit,
+      kind = unit.attackType,
       x = unit.x + 12,
       y = unit.y,
       vx = (dx / d) * spd,
       vy = (dy / d) * spd,
+      angle = math.atan2(dy, dx),
       damage = dmg,
       isCrit = isCrit,
       splash = unit.splash or 0,
@@ -327,10 +369,12 @@ local function performAllyAttack(state, unit, target)
       state.projectiles[#state.projectiles + 1] = {
         fromEnemy = false,
         attacker = unit,
+        kind = "arrow",
         x = unit.x + 12,
         y = unit.y,
         vx = math.cos(ang) * spd,
         vy = math.sin(ang) * spd,
+        angle = ang,
         damage = dmg * 0.72,
         isCrit = isCrit,
         splash = 0,
@@ -352,7 +396,7 @@ local function performAllyAttack(state, unit, target)
     local maxHits = (unit.attackType == "lance") and (1 + (unit.pierce or 1)) or 99
     for _, foe in ipairs(state.enemies) do
       if foe.hp > 0 and dist(foe, target) <= r then
-        damageEnemy(state, foe, dmg, unit, isCrit, unit.knockback or 0)
+        damageEnemy(state, foe, dmg, unit, isCrit, unit.knockback or 0, synergies)
         hits = hits + 1
         if hits >= maxHits then break end
       end
@@ -367,7 +411,7 @@ local function performAllyAttack(state, unit, target)
       radius = (unit.attackType == "cleave") and 30 or 24,
     })
   else
-    damageEnemy(state, target, dmg, unit, isCrit, unit.knockback or 0)
+    damageEnemy(state, target, dmg, unit, isCrit, unit.knockback or 0, synergies)
     spawnVfx(state, {
       kind = "slash",
       x = target.x,
@@ -396,6 +440,7 @@ function M.updateBattle(state, dt)
     end
   end
 
+  local synergies = state.synergies or M.computeSynergies(state.roster)
   local allAllies = {}
   for _, u in ipairs(state.roster) do
     if u.hp > 0 then allAllies[#allAllies + 1] = u end
@@ -404,18 +449,18 @@ function M.updateBattle(state, dt)
     if u.hp > 0 then allAllies[#allAllies + 1] = u end
   end
 
-  -- Update allied units
   for _, unit in ipairs(allAllies) do
     unit.hitFlash = math.max(0, (unit.hitFlash or 0) - dt)
     unit.attackAnim = math.max(0, (unit.attackAnim or 0) - dt)
     unit.overdriveTimer = math.max(0, (unit.overdriveTimer or 0) - dt)
 
     local speedBonus = (unit.overdriveTimer > 0) and 1.4 or 1.0
+    local sylvanBonus = (synergies.sylvan and unit.family == "sylvan") and 1.2 or 1.0
     local coreAspdBonus = (not unit.isSummon
       and (unit.attackType == "arrow" or unit.attackType == "multishot" or unit.attackType == "magic")
       and state:hasCore("wind_quiver")) and 1.22 or 1.0
 
-    unit.cooldown = unit.cooldown - dt * speedBonus * coreAspdBonus
+    unit.cooldown = unit.cooldown - dt * speedBonus * sylvanBonus * coreAspdBonus
 
     local target = nil
     local bestD = math.huge
@@ -444,7 +489,7 @@ function M.updateBattle(state, dt)
         unit.x = math.min(maxAdvanceX, math.max(M.ARENA.castleX + 26, nx))
         unit.y = math.max(M.ARENA.minY, math.min(M.ARENA.maxY, ny))
       elseif unit.cooldown <= 0 then
-        performAllyAttack(state, unit, target)
+        performAllyAttack(state, unit, target, synergies)
       end
     else
       local dx = unit.homeX - unit.x
@@ -458,7 +503,6 @@ function M.updateBattle(state, dt)
     end
   end
 
-  -- Update enemies
   for _, foe in ipairs(state.enemies) do
     if foe.hp > 0 then
       foe.hitFlash = math.max(0, foe.hitFlash - dt)
@@ -506,12 +550,16 @@ function M.updateBattle(state, dt)
           foe.attackAnim = 0.18
           if foe.projSpeed > 0 then
             local denom = (dToTarget == 0) and 1 or dToTarget
+            local vx = ((target.x - foe.x) / denom) * foe.projSpeed
+            local vy = ((target.y - foe.y) / denom) * foe.projSpeed
             state.projectiles[#state.projectiles + 1] = {
               fromEnemy = true,
+              kind = "enemy",
               x = foe.x - 10,
               y = foe.y,
-              vx = ((target.x - foe.x) / denom) * foe.projSpeed,
-              vy = ((target.y - foe.y) / denom) * foe.projSpeed,
+              vx = vx,
+              vy = vy,
+              angle = math.atan2(vy, vx),
               damage = foe.atk,
               color = foe.accent,
               radius = foe.isBoss and 7 or 4,
@@ -520,7 +568,7 @@ function M.updateBattle(state, dt)
               life = 2.2,
             }
           else
-            damageAlly(state, target, foe.atk, foe)
+            damageAlly(state, target, foe.atk, foe, synergies)
             spawnVfx(state, {
               kind = "slash",
               x = target.x,
@@ -558,7 +606,6 @@ function M.updateBattle(state, dt)
     end
   end
 
-  -- Update projectiles
   for _, p in ipairs(state.projectiles) do
     p.x = p.x + p.vx * dt
     p.y = p.y + p.vy * dt
@@ -569,7 +616,7 @@ function M.updateBattle(state, dt)
         if ally.hp > 0 and not p.hitIds[ally.id] then
           if dist(p, ally) <= (ally.radius or 15) + p.radius then
             p.hitIds[ally.id] = true
-            damageAlly(state, ally, p.damage, nil)
+            damageAlly(state, ally, p.damage, nil, synergies)
             p.life = 0
             break
           end
@@ -584,7 +631,7 @@ function M.updateBattle(state, dt)
               for _, near in ipairs(state.enemies) do
                 if near.hp > 0 and dist(near, p) <= p.splash then
                   local mult = (near == foe) and 1 or 0.65
-                  damageEnemy(state, near, p.damage * mult, p.attacker, p.isCrit, 0)
+                  damageEnemy(state, near, p.damage * mult, p.attacker, p.isCrit, 0, synergies)
                 end
               end
               spawnVfx(state, {
@@ -597,14 +644,14 @@ function M.updateBattle(state, dt)
                 maxLife = 0.22,
               })
             else
-              damageEnemy(state, foe, p.damage, p.attacker, p.isCrit, 0)
+              damageEnemy(state, foe, p.damage, p.attacker, p.isCrit, 0, synergies)
             end
 
             if p.chainTargets and p.chainTargets > 0 then
               local chained = 0
               for _, near in ipairs(state.enemies) do
                 if near ~= foe and near.hp > 0 and dist(near, foe) <= 130 then
-                  damageEnemy(state, near, p.damage * 0.6, p.attacker, false, 0)
+                  damageEnemy(state, near, p.damage * 0.6, p.attacker, false, 0, synergies)
                   spawnVfx(state, {
                     kind = "beam",
                     x1 = foe.x,
@@ -633,7 +680,6 @@ function M.updateBattle(state, dt)
     end
   end
 
-  -- Update meteors
   for _, m in ipairs(state.meteors) do
     m.progress = m.progress + dt / m.duration
     if m.progress >= 1 then
@@ -642,9 +688,18 @@ function M.updateBattle(state, dt)
       state.audio:playMeteor()
       for _, foe in ipairs(state.enemies) do
         if foe.hp > 0 and dist(foe, m) <= m.radius then
-          damageEnemy(state, foe, m.damage, m.attacker, true, 16)
+          damageEnemy(state, foe, m.damage, m.attacker, true, 16, synergies)
         end
       end
+      spawnVfx(state, {
+        kind = "crater",
+        x = m.x,
+        y = m.y,
+        color = Color.hex("#451a03"),
+        radius = m.radius * 0.55,
+        life = 2.6,
+        maxLife = 2.6,
+      })
       spawnVfx(state, {
         kind = "ring",
         x = m.x,
@@ -672,7 +727,6 @@ function M.updateBattle(state, dt)
     end
   end
 
-  -- Filter alive entities
   local function filterList(list, pred)
     local out = {}
     for _, item in ipairs(list) do
@@ -685,7 +739,7 @@ function M.updateBattle(state, dt)
   state.roster = filterList(state.roster, function(u) return u.hp > 0 end)
   state.summons = filterList(state.summons, function(u) return u.hp > 0 end)
   state.projectiles = filterList(state.projectiles, function(p)
-    return p.life > 0 and p.x >= M.ARENA.x - 20 and p.x <= M.ARENA.spawnX + 60
+    return p.life > 0 and p.x >= M.ARENA.x - 20 and p.x <= M.ARENA.rightBound + 40
   end)
   state.meteors = filterList(state.meteors, function(m) return not m.impacted end)
 end

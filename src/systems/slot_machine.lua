@@ -5,27 +5,43 @@ local M = {}
 function M.resolveLineSymbols(a, b, c)
   local arr = { a, b, c }
   local crowns = 0
-  local nonCrowns = {}
+  local jesters = 0
+  local nonWilds = {}
+
   for _, s in ipairs(arr) do
     if s == "crown" then
       crowns = crowns + 1
+    elseif s == "jester" then
+      jesters = jesters + 1
     else
-      nonCrowns[#nonCrowns + 1] = s
+      nonWilds[#nonWilds + 1] = s
     end
   end
 
-  if #nonCrowns == 0 then
-    return { matchedSymbolId = "crown", isPureJackpot = true, crownCount = 3 }
+  if #nonWilds == 0 then
+    if crowns == 3 then
+      return { matchedSymbolId = "crown", isPureJackpot = true, crownCount = 3, jesterCount = 0 }
+    elseif jesters == 3 then
+      return { matchedSymbolId = "jester", isPureJackpot = false, crownCount = 0, jesterCount = 3 }
+    else
+      -- Mix of crown & jester -> counts as Jackpot Crown!
+      return { matchedSymbolId = "crown", isPureJackpot = true, crownCount = crowns, jesterCount = jesters }
+    end
   end
 
-  local first = nonCrowns[1]
-  for i = 2, #nonCrowns do
-    if nonCrowns[i] ~= first then
+  local first = nonWilds[1]
+  for i = 2, #nonWilds do
+    if nonWilds[i] ~= first then
       return nil
     end
   end
 
-  return { matchedSymbolId = first, isPureJackpot = false, crownCount = crowns }
+  return {
+    matchedSymbolId = first,
+    isPureJackpot = false,
+    crownCount = crowns,
+    jesterCount = jesters,
+  }
 end
 
 function M.evaluateGrid(grid)
@@ -44,6 +60,7 @@ function M.evaluateGrid(grid)
         symbolId = resolved.matchedSymbolId,
         isPureJackpot = resolved.isPureJackpot,
         crownCount = resolved.crownCount,
+        jesterCount = resolved.jesterCount,
         symbol = Symbols.SYMBOLS[resolved.matchedSymbolId],
       }
     end
@@ -63,10 +80,12 @@ function SlotMachine.new(weights)
       Symbols.buildReelStrip(weights),
     },
     offsets = { 1, 1, 1 },
+    locked = { false, false, false },
     spinning = false,
     reelSpinning = { false, false, false },
     reelTimers = { 0, 0, 0 },
     reelVisualShift = { 0, 0, 0 },
+    reelBounce = { 0, 0, 0 },
     tickAccum = { 0, 0, 0 },
     claimedLines = {},
     activeMatches = {},
@@ -87,15 +106,18 @@ function SlotMachine:rebuild(weights)
   end
 end
 
+function SlotMachine:getSymbolAt(col, relOffset)
+  local strip = self.strips[col]
+  local len = #strip
+  local idx = ((self.offsets[col] + relOffset - 1) % len) + 1
+  return strip[idx]
+end
+
 function SlotMachine:getGrid()
   local grid = { {}, {}, {} }
   for col = 1, 3 do
-    local strip = self.strips[col]
-    local len = #strip
-    local base = self.offsets[col]
     for row = 1, 3 do
-      local idx = ((base + row - 2) % len) + 1
-      grid[col][row] = strip[idx]
+      grid[col][row] = self:getSymbolAt(col, row - 1)
     end
   end
   return grid
@@ -103,19 +125,38 @@ end
 
 function SlotMachine:startSpin()
   self.spinning = true
-  self.reelSpinning = { true, true, true }
-  self.reelTimers = { 0.36, 0.56, 0.78 }
-  self.reelVisualShift = { 0, 0, 0 }
-  self.tickAccum = { 0, 0, 0 }
   self.claimedLines = {}
   self.activeMatches = {}
+  self.reelVisualShift = { 0, 0, 0 }
+  self.reelBounce = { 0, 0, 0 }
+  self.tickAccum = { 0, 0, 0 }
 
+  local baseDurs = { 0.36, 0.56, 0.78 }
+  local anySpinning = false
   for col = 1, 3 do
-    self.offsets[col] = math.random(1, #self.strips[col])
+    if self.locked[col] then
+      self.reelSpinning[col] = false
+      self.reelTimers[col] = 0
+    else
+      anySpinning = true
+      self.reelSpinning[col] = true
+      self.reelTimers[col] = baseDurs[col]
+      self.offsets[col] = math.random(1, #self.strips[col])
+    end
+  end
+
+  if not anySpinning then
+    -- Safety fallback if somehow all 3 were locked
+    self.reelSpinning[3] = true
+    self.reelTimers[3] = 0.36
   end
 end
 
 function SlotMachine:update(dt)
+  for col = 1, 3 do
+    self.reelBounce[col] = math.max(0, self.reelBounce[col] - dt * 5)
+  end
+
   if not self.spinning then
     return { finished = false, stoppedCols = {}, ticked = false }
   end
@@ -127,9 +168,9 @@ function SlotMachine:update(dt)
     if self.reelSpinning[col] then
       self.reelTimers[col] = self.reelTimers[col] - dt
       self.tickAccum[col] = self.tickAccum[col] + dt
-      self.reelVisualShift[col] = (self.reelVisualShift[col] + dt * 16) % 1
+      self.reelVisualShift[col] = (self.reelVisualShift[col] + dt * 18) % 1
 
-      if self.tickAccum[col] >= 0.06 then
+      if self.tickAccum[col] >= 0.055 then
         self.tickAccum[col] = 0
         local len = #self.strips[col]
         self.offsets[col] = (self.offsets[col] % len) + 1
@@ -139,6 +180,7 @@ function SlotMachine:update(dt)
       if self.reelTimers[col] <= 0 then
         self.reelSpinning[col] = false
         self.reelVisualShift[col] = 0
+        self.reelBounce[col] = 1.0
         self.offsets[col] = math.random(1, #self.strips[col])
         stoppedCols[#stoppedCols + 1] = col
       end
@@ -147,6 +189,7 @@ function SlotMachine:update(dt)
 
   if not self.reelSpinning[1] and not self.reelSpinning[2] and not self.reelSpinning[3] then
     self.spinning = false
+    self.locked = { false, false, false }
     return { finished = true, stoppedCols = stoppedCols, ticked = ticked }
   end
 
@@ -159,6 +202,7 @@ function SlotMachine:nudge(col, dir)
   end
   local len = #self.strips[col]
   self.offsets[col] = ((self.offsets[col] - 1 + dir) % len) + 1
+  self.reelBounce[col] = 0.55
   return true
 end
 
