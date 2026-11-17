@@ -337,7 +337,7 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
       font = self.fonts.f12,
       hovered = isHover(hoverPos, upRect),
     })
-    registerHit("nudge", upRect, { col = col, dir = -1 })
+    registerHit("nudge", upRect, { col = col, dir = 1 })
   end
 
   lg.setColor(Color.hex("#0e101a"))
@@ -402,7 +402,7 @@ function Renderer:renderSlotPanel(state, i18n, registerHit, hoverPos)
       font = self.fonts.f12,
       hovered = isHover(hoverPos, dnRect),
     })
-    registerHit("nudge", dnRect, { col = col, dir = 1 })
+    registerHit("nudge", dnRect, { col = col, dir = -1 })
   end
 
   local spinCost = state:currentSpinCost()

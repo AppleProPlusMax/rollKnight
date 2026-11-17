@@ -61,10 +61,18 @@ addTest("SlotMachine nudge shifts reel and collectNewMatches prevents double cla
   }
   slot.offsets = { 1, 1, 1 }
 
+  local before = slot:getGrid()[3]
   assert(#slot:collectNewMatches() == 0)
+  -- dir = 1 nudges symbols UP: row 2 -> row 1, row 3 -> row 2
   assert(slot:nudge(3, 1) == true)
+  local afterUp = slot:getGrid()[3]
+  assert(afterUp[1] == before[2] and afterUp[2] == before[3])
   assert(#slot:collectNewMatches() == 3)
   assert(#slot:collectNewMatches() == 0)
+  -- dir = -1 nudges symbols DOWN: row 1 -> row 2, row 2 -> row 3
+  assert(slot:nudge(3, -1) == true)
+  local afterDown = slot:getGrid()[3]
+  assert(afterDown[1] == before[1] and afterDown[2] == before[2] and afterDown[3] == before[3])
 end)
 
 addTest("GameState unit absorption evolves to 2-star and opens classModal at 3-star", function()
