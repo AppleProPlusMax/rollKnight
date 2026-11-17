@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { evaluateGrid, resolveLineSymbols, SlotMachine } from "../src/systems/slotMachine.js";
-import { GameState } from "../src/systems/state.js";
+import { ARENA, spawnEnemyFromPlan, updateBattle } from "../src/systems/battle.js";
+import { createUnitInstance, GameState } from "../src/systems/state.js";
 
 const mockAudio = {
   playLever() {},
@@ -121,4 +122,29 @@ test("GameState battle simulation clears wave 1 and opens coreModal", () => {
   assert.equal(state.wave, 2);
   assert.ok(state.coreModal, "Clearing wave 1 should present a Core relic draft");
   assert.equal(state.coreModal.choices.length, 3);
+});
+
+test("allies can reach and defeat ranged enemies positioned on the far-right arena edge", () => {
+  for (const unitId of ["warrior", "mage"]) {
+    const state = new GameState(mockAudio);
+    state.startRun();
+    state.roster = [createUnitInstance(unitId)];
+    state.roster[0].x = 700;
+    state.roster[0].y = 340;
+    state.phase = "battle";
+    state.waveActive = true;
+    state.wavePlan = { wave: 4, spawns: [] };
+
+    const edgeArcher = spawnEnemyFromPlan({ type: "archer_foe", delay: 0, scale: 1 });
+    edgeArcher.x = ARENA.rightBound;
+    edgeArcher.y = 340;
+    state.enemies.push(edgeArcher);
+
+    for (let i = 0; i < 400; i++) {
+      updateBattle(state, 0.05);
+      if (state.enemies.length === 0) break;
+    }
+
+    assert.equal(state.enemies.length, 0, `${unitId} should reach and defeat enemy at right edge`);
+  }
 });

@@ -7,6 +7,7 @@ export const ARENA = {
   h: 552,
   castleX: 432,
   spawnX: 1236,
+  rightBound: 1240,
   minY: 118,
   maxY: 594,
 };
@@ -29,7 +30,7 @@ export function spawnEnemyFromPlan(entry) {
     name: tpl.name,
     isBoss: !!tpl.isBoss,
     targetsBackline: !!tpl.targetsBackline,
-    x: ARENA.spawnX + Math.random() * 24,
+    x: ARENA.rightBound - Math.random() * 14,
     y,
     vx: 0,
     vy: 0,
@@ -59,7 +60,7 @@ export function spawnSkeletonAlly(x, y, waveScale = 1) {
     isSummon: true,
     name: { zh: "骷髅兵", en: "Skeleton" },
     role: "frontline",
-    x: Math.min(ARENA.spawnX - 60, x + (Math.random() - 0.5) * 18),
+    x: Math.min(ARENA.rightBound - 10, x + (Math.random() - 0.5) * 18),
     y: Math.max(ARENA.minY, Math.min(ARENA.maxY, y + (Math.random() - 0.5) * 24)),
     homeX: x,
     homeY: y,
@@ -152,9 +153,9 @@ function damageEnemy(state, enemy, rawDmg, attacker, isCrit = false, knockback =
   enemy.hitFlash = 0.14;
 
   if (knockback > 0 && !enemy.isBoss) {
-    enemy.x = Math.min(ARENA.spawnX + 10, enemy.x + knockback);
+    enemy.x = Math.min(ARENA.rightBound, enemy.x + knockback);
   } else if (knockback > 0 && enemy.isBoss) {
-    enemy.x = Math.min(ARENA.spawnX + 10, enemy.x + knockback * 0.25);
+    enemy.x = Math.min(ARENA.rightBound, enemy.x + knockback * 0.25);
   }
 
   addFloatingText(
@@ -270,12 +271,16 @@ export function updateBattle(state, dt) {
     }
 
     if (target) {
-      if (bestD > unit.range) {
+      const effectiveRange = unit.range + (target.radius || 14) * 0.6;
+      if (bestD > effectiveRange) {
         const dx = target.x - unit.x;
         const dy = target.y - unit.y;
         const len = Math.hypot(dx, dy) || 1;
-        // Backline stays left of midline unless enemy is close
-        const maxAdvanceX = unit.role === "backline" ? ARENA.castleX + 360 : ARENA.spawnX - 60;
+        // Backline stays left of midline when possible, but advances far enough to keep edge enemies in range
+        const maxAdvanceX =
+          unit.role === "backline"
+            ? Math.max(ARENA.castleX + 360, ARENA.rightBound - unit.range + 40)
+            : ARENA.rightBound - 6;
         const nx = unit.x + (dx / len) * unit.speed * dt;
         const ny = unit.y + (dy / len) * unit.speed * dt;
         unit.x = Math.min(maxAdvanceX, Math.max(ARENA.castleX + 26, nx));
@@ -337,8 +342,9 @@ export function updateBattle(state, dt) {
     }
 
     const dToTarget = target ? dist(foe, target) : Infinity;
+    const enteredArena = foe.x <= ARENA.rightBound - 18;
 
-    if (target && dToTarget <= foe.range) {
+    if (target && enteredArena && dToTarget <= foe.range) {
       if (foe.cooldown <= 0) {
         foe.cooldown = 1 / foe.aspd;
         foe.attackAnim = 0.18;
