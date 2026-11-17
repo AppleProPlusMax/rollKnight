@@ -143,12 +143,14 @@ function Renderer:render(state, i18n, time, hoverPos, dragState, viewportTransfo
     hitboxes[#hitboxes + 1] = { id = id, rect = rect, payload = payload }
   end
 
-  lg.push()
+  local shakeX, shakeY = 0, 0
   if state.screenShake > 0.2 then
-    local sx = (math.random() - 0.5) * state.screenShake
-    local sy = (math.random() - 0.5) * state.screenShake
-    lg.translate(sx, sy)
+    shakeX = (math.random() - 0.5) * state.screenShake
+    shakeY = (math.random() - 0.5) * state.screenShake
   end
+
+  lg.push()
+  lg.translate(shakeX, shakeY)
 
   lg.setColor(Color.hex("#10121c"))
   lg.rectangle("fill", 0, 0, 1280, 720)
@@ -160,7 +162,7 @@ function Renderer:render(state, i18n, time, hoverPos, dragState, viewportTransfo
   end
 
   self:renderHud(state, i18n, registerHit, hoverPos)
-  self:renderSlotPanel(state, i18n, time, registerHit, hoverPos, viewportTransform)
+  self:renderSlotPanel(state, i18n, time, registerHit, hoverPos, viewportTransform, shakeX, shakeY)
   self:renderArena(state, i18n, time, registerHit, hoverPos, dragState)
   self:renderRosterStrip(state, i18n, registerHit, hoverPos)
 
@@ -177,6 +179,19 @@ function Renderer:render(state, i18n, time, hoverPos, dragState, viewportTransfo
     lg.printf(ft.text, ft.x - 99, ft.y + 1, 200, "center")
     lg.setColor(ft.color[1], ft.color[2], ft.color[3], alpha)
     lg.printf(ft.text, ft.x - 100, ft.y, 200, "center")
+  end
+
+  local hasModal = state.shopModal or state.guideModal or state.coreModal or state.classModal
+    or state.phase == "gameover" or state.phase == "victory"
+
+  if hasModal then
+    -- Isolate modal clicks so clicks never fall through onto background controls
+    hitboxes = {}
+    if state.shopModal or state.guideModal then
+      registerHit("close_modals", { x = 0, y = 0, w = 1280, h = 720 })
+    else
+      registerHit("modal_blocker", { x = 0, y = 0, w = 1280, h = 720 })
+    end
   end
 
   if state.shopModal then
@@ -382,7 +397,9 @@ function Renderer:renderHud(state, i18n, registerHit, hoverPos)
   registerHit("toggle_lang", langBtn)
 end
 
-function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp)
+function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp, shakeX, shakeY)
+  shakeX = shakeX or 0
+  shakeY = shakeY or 0
   local lg = love.graphics
   local function t(k) return i18n:t(k) end
 
@@ -403,10 +420,12 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp)
   for col = 1, 3 do
     local cx = REEL_BOX.x + 6 + (col - 1) * (CELL_W + CELL_GAP)
     local upRect = { x = cx, y = 102, w = CELL_W, h = 26 }
-    self:drawButton(upRect, "^ " .. t("nudgeUp"), {
+    local hintUp = canNudge and state.slot:wouldNudgeMatch(col, 1)
+    self:drawButton(upRect, (hintUp and "* ^ " or "^ ") .. t("nudgeUp"), {
       disabled = not canNudge,
-      bg = Color.hex("#21322b"),
-      border = Color.hex("#4ade80"),
+      bg = hintUp and Color.hex("#2b4a26") or Color.hex("#21322b"),
+      border = hintUp and Color.hex("#facc15") or Color.hex("#4ade80"),
+      text = hintUp and Color.hex("#fef08a") or Color.hex("#f1f5f9"),
       font = self.fonts.f11,
       hovered = isHover(hoverPos, upRect),
     })
@@ -446,8 +465,8 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp)
     end
   end
 
-  local sx = vp.ox + (REEL_BOX.x + 4) * vp.scale
-  local sy = vp.oy + (REEL_BOX.y + 4) * vp.scale
+  local sx = vp.ox + (REEL_BOX.x + 4 + shakeX) * vp.scale
+  local sy = vp.oy + (REEL_BOX.y + 4 + shakeY) * vp.scale
   local sw = (REEL_BOX.w - 8) * vp.scale
   local sh = (REEL_BOX.h - 8) * vp.scale
   lg.setScissor(sx, sy, sw, sh)
@@ -500,10 +519,12 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp)
   for col = 1, 3 do
     local cx = REEL_BOX.x + 6 + (col - 1) * (CELL_W + CELL_GAP)
     local dnRect = { x = cx, y = 342, w = 52, h = 24 }
-    self:drawButton(dnRect, "v " .. t("nudgeDown"), {
+    local hintDn = canNudge and state.slot:wouldNudgeMatch(col, -1)
+    self:drawButton(dnRect, (hintDn and "* " or "v ") .. t("nudgeDown"), {
       disabled = not canNudge,
-      bg = Color.hex("#21322b"),
-      border = Color.hex("#4ade80"),
+      bg = hintDn and Color.hex("#2b4a26") or Color.hex("#21322b"),
+      border = hintDn and Color.hex("#facc15") or Color.hex("#4ade80"),
+      text = hintDn and Color.hex("#fef08a") or Color.hex("#f1f5f9"),
       font = self.fonts.f11,
       hovered = isHover(hoverPos, dnRect),
     })
@@ -574,15 +595,15 @@ function Renderer:renderSlotPanel(state, i18n, time, registerHit, hoverPos, vp)
   if sel then
     local rarName = sel.rarity and i18n:pick(sel.rarity.name) or ""
     local famName = (sel.family and Units.FAMILIES[sel.family]) and i18n:pick(Units.FAMILIES[sel.family].name) or ""
-    lg.setFont(self.fonts.f14)
+    lg.setFont(self.fonts.f13)
     lg.setColor(sel.accent)
-    lg.print("[" .. rarName .. "] " .. i18n:pick(sel.name) .. " (" .. sel.tier .. "*)", card.x + 10, card.y + 8)
+    lg.printf("[" .. rarName .. "] " .. i18n:pick(sel.name) .. " (" .. sel.tier .. "*)", card.x + 10, card.y + 8, 210, "left")
 
     local needed = Units.xpNeededForTier(sel.tier)
     local xpTxt = (sel.tier >= 3) and t("paragonLabel") or (t("xpLabel") .. " " .. sel.xp .. "/" .. needed)
     lg.setFont(self.fonts.f11)
     lg.setColor(sel.tier >= 3 and Color.hex("#fde047") or Color.hex("#94a3b8"))
-    lg.printf(xpTxt, card.x, card.y + 10, card.w - 10, "right")
+    lg.printf(xpTxt, card.x + 212, card.y + 10, card.w - 222, "right")
 
     lg.setFont(self.fonts.f12)
     lg.setColor(Color.hex("#cbd5e1"))
@@ -804,14 +825,23 @@ function Renderer:renderArena(state, i18n, time, registerHit, hoverPos, dragStat
 
   if dragState and dragState.active then
     local srcUnit = nil
+    local hoverTarget = nil
     for _, u in ipairs(state.roster) do
-      if u.id == dragState.unitId then srcUnit = u; break end
+      if u.id == dragState.unitId then
+        srcUnit = u
+      elseif math.sqrt((dragState.curX - u.x)^2 + (dragState.curY - u.y)^2) <= 28 then
+        hoverTarget = u
+      end
     end
     if srcUnit then
-      lg.setColor(1, 0.87, 0.42, 0.75)
-      lg.setLineWidth(2)
+      lg.setColor(hoverTarget and Color.hex("#4ade80") or { 1, 0.87, 0.42, 0.78 })
+      lg.setLineWidth(2.2)
       lg.line(srcUnit.x, srcUnit.y, dragState.curX, dragState.curY)
-      lg.circle("line", dragState.curX, dragState.curY, 18)
+      lg.circle("line", hoverTarget and hoverTarget.x or dragState.curX, hoverTarget and hoverTarget.y or dragState.curY, hoverTarget and 24 or 18)
+      if hoverTarget then
+        lg.setFont(self.fonts.f12)
+        lg.printf(t("feedMode"), hoverTarget.x - 50, hoverTarget.y - 42, 100, "center")
+      end
       lg.setLineWidth(1)
     end
   end
@@ -934,6 +964,7 @@ function Renderer:renderGuideModal(state, i18n, registerHit, hoverPos)
   lg.setColor(Color.hex("#60a5fa"))
   lg.rectangle("line", 160, 96, 960, 528, 14, 14)
   lg.setLineWidth(1)
+  registerHit("modal_blocker", { x = 160, y = 96, w = 960, h = 528 })
 
   lg.setFont(self.fonts.f28)
   lg.setColor(Color.hex("#93c5fd"))
@@ -986,6 +1017,7 @@ function Renderer:renderShopModal(state, i18n, registerHit, hoverPos)
   lg.setColor(Color.hex("#facc15"))
   lg.rectangle("line", 160, 100, 960, 520, 14, 14)
   lg.setLineWidth(1)
+  registerHit("modal_blocker", { x = 160, y = 100, w = 960, h = 520 })
 
   lg.setFont(self.fonts.f28)
   lg.setColor(Color.hex("#fde047"))

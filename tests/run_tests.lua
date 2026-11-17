@@ -63,6 +63,8 @@ addTest("SlotMachine nudge shifts reel and collectNewMatches prevents double cla
 
   local before = slot:getGrid()[3]
   assert(#slot:collectNewMatches() == 0)
+  assert(slot:wouldNudgeMatch(3, 1) == true)
+  assert(slot:wouldNudgeMatch(3, -1) == false)
   -- dir = 1 nudges symbols UP: row 2 -> row 1, row 3 -> row 2
   assert(slot:nudge(3, 1) == true)
   local afterUp = slot:getGrid()[3]
@@ -218,6 +220,29 @@ addTest("pity meter grants free wild spin, 3-star paragon absorb empowers, and b
   assert(foe.chillTimer == 2.0)
   Battle.updateBattle(state, 0.55)
   assert(foe.hp < foeHp)
+end)
+
+addTest("frontline units intercept enemies closer to the castle over distant enemies", function()
+  local state = StateMod.GameState.new(mockAudio)
+  state:startRun()
+  local warrior = state.roster[1]
+  warrior.x = 850
+  warrior.y = 340
+  state.roster = { warrior }
+  state.phase = "battle"
+  state.waveActive = true
+  state.wavePlan = { wave = 1, spawns = {} }
+
+  local farEnemy = Battle.spawnEnemyFromPlan({ type = "orc", delay = 0, scale = 1 })
+  farEnemy.x = 930
+  farEnemy.y = 340
+  local breachEnemy = Battle.spawnEnemyFromPlan({ type = "goblin", delay = 0, scale = 1 })
+  breachEnemy.x = 550
+  breachEnemy.y = 340
+  state.enemies = { farEnemy, breachEnemy }
+
+  Battle.updateBattle(state, 0.05)
+  assert(warrior.x < 850, "Warrior should turn left to intercept breaching goblin")
 end)
 
 local function runAll()

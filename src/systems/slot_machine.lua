@@ -130,7 +130,6 @@ local function findWildOffset(strip)
   for i = 1, len do
     local sym = strip[i]
     if sym == "crown" or sym == "jester" then
-      -- To appear in row 2 (center), base offset is i - 1 wrapped
       local base = ((i - 2) % len) + 1
       candidates[#candidates + 1] = base
     end
@@ -188,13 +187,12 @@ function SlotMachine:update(dt)
   for col = 1, 3 do
     if self.reelSpinning[col] then
       self.reelTimers[col] = self.reelTimers[col] - dt
-      self.tickAccum[col] = self.tickAccum[col] + dt
-      self.reelVisualShift[col] = (self.reelVisualShift[col] + dt * 18) % 1
-
-      if self.tickAccum[col] >= 0.055 then
-        self.tickAccum[col] = 0
+      -- Continuous downward reel roll: when visual shift wraps past 1, decrement offset by 1 so symbols flow seamlessly downward
+      self.reelVisualShift[col] = self.reelVisualShift[col] + dt * 18
+      while self.reelVisualShift[col] >= 1 do
+        self.reelVisualShift[col] = self.reelVisualShift[col] - 1
         local len = #self.strips[col]
-        self.offsets[col] = (self.offsets[col] % len) + 1
+        self.offsets[col] = ((self.offsets[col] - 2) % len) + 1
         ticked = true
       end
 
@@ -231,6 +229,23 @@ function SlotMachine:nudge(col, dir)
   self.offsets[col] = ((self.offsets[col] - 1 + dir) % len) + 1
   self.reelBounce[col] = 0.55
   return true
+end
+
+--- Returns true if nudging `col` by `dir` would create at least one unclaimed payline match.
+function SlotMachine:wouldNudgeMatch(col, dir)
+  if self.spinning or col < 1 or col > 3 then return false end
+  local prev = self.offsets[col]
+  local len = #self.strips[col]
+  self.offsets[col] = ((prev - 1 + dir) % len) + 1
+  local matches = M.evaluateGrid(self:getGrid())
+  self.offsets[col] = prev
+
+  for _, m in ipairs(matches) do
+    if not self.claimedLines[m.lineId] then
+      return true
+    end
+  end
+  return false
 end
 
 function SlotMachine:collectNewMatches()

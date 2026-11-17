@@ -523,16 +523,20 @@ function M.updateBattle(state, dt)
     unit.cooldown = unit.cooldown - dt * speedBonus * sylvanBonus * coreAspdBonus
 
     local target = nil
-    local bestD = math.huge
+    local bestScore = math.huge
     for _, foe in ipairs(state.enemies) do
       if foe.hp > 0 then
         local d = dist(unit, foe)
-        if d < bestD then
-          bestD = d
+        -- Frontline/vanguard strongly prioritize enemies that slipped past them toward the castle
+        local breachPenalty = ((unit.role == "frontline" or unit.role == "vanguard") and foe.x < unit.x) and -240 or 0
+        local score = d + foe.x * 0.25 + breachPenalty
+        if score < bestScore then
+          bestScore = score
           target = foe
         end
       end
     end
+    local bestD = target and dist(unit, target) or math.huge
 
     if target then
       local effectiveRange = unit.range + (target.radius or 14) * 0.6

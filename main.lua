@@ -68,6 +68,11 @@ local function dispatchAction(hit)
   elseif id == "toggle_guide" then
     state.shopModal = false
     state.guideModal = not state.guideModal
+  elseif id == "close_modals" then
+    state.shopModal = false
+    state.guideModal = false
+  elseif id == "modal_blocker" then
+    -- Swallow click on modal body/backdrop
   elseif id == "buy_upgrade" then
     state:buyUpgrade(hit.payload.upgId)
   elseif id == "toggle_speed" then
@@ -211,7 +216,7 @@ function love.mousepressed(x, y, button)
     local h = hitboxes[i]
     local r = h.rect
     if pos.x >= r.x and pos.x <= r.x + r.w and pos.y >= r.y and pos.y <= r.y + r.h then
-      if h.id == "unit_arena" and not state.feedMode and not state.coreModal and not state.classModal and not state.shopModal and not state.guideModal then
+      if h.id == "unit_arena" and not state.waveActive and not state.feedMode and not state.coreModal and not state.classModal and not state.shopModal and not state.guideModal then
         dragState = {
           unitId = h.payload.unitId,
           startX = pos.x,

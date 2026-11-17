@@ -8,7 +8,7 @@ M.SYMBOLS = {
     name = { zh = "盾卫", en = "Warrior" },
     unitId = "warrior",
     color = Color.hex("#5b9bd5"),
-    weight = 23,
+    weight = 22,
     payoutGold = 0,
   },
   bow = {
@@ -16,7 +16,7 @@ M.SYMBOLS = {
     name = { zh = "游侠", en = "Ranger" },
     unitId = "ranger",
     color = Color.hex("#6ec472"),
-    weight = 21,
+    weight = 20,
     payoutGold = 0,
   },
   staff = {
@@ -56,7 +56,7 @@ M.SYMBOLS = {
     name = { zh = "弄臣", en = "Jester" },
     unitId = "jester",
     color = Color.hex("#ff4d6d"),
-    weight = 6,
+    weight = 7,
     payoutGold = 8,
     isWild = true,
   },
@@ -65,7 +65,7 @@ M.SYMBOLS = {
     name = { zh = "头奖", en = "Jackpot" },
     unitId = "champion",
     color = Color.hex("#ffdf6b"),
-    weight = 5,
+    weight = 6,
     payoutGold = 18,
     isJackpot = true,
     isWild = true,
@@ -85,18 +85,39 @@ M.PAYLINES = {
   { id = "diag2", name = "Diag /", isDiagonal = true, cells = { { 1, 3 }, { 2, 2 }, { 3, 1 } } },
 }
 
+local function shuffle(list)
+  for i = #list, 2, -1 do
+    local j = math.random(1, i)
+    list[i], list[j] = list[j], list[i]
+  end
+end
+
+--- Build a balanced reel strip using small shuffled blocks so symbols never suffer long dry streaks.
 function M.buildReelStrip(weightsOverride)
   weightsOverride = weightsOverride or {}
-  local pool = {}
+  local buckets = {}
+  local maxW = 0
   for _, key in ipairs(M.SYMBOL_KEYS) do
     local w = math.max(1, math.floor((weightsOverride[key] or M.SYMBOLS[key].weight) + 0.5))
-    for _ = 1, w do
-      pool[#pool + 1] = key
-    end
+    buckets[key] = w
+    if w > maxW then maxW = w end
   end
-  for i = #pool, 2, -1 do
-    local j = math.random(1, i)
-    pool[i], pool[j] = pool[j], pool[i]
+
+  local blocks = 4
+  local pool = {}
+  for b = 1, blocks do
+    local sub = {}
+    for _, key in ipairs(M.SYMBOL_KEYS) do
+      local w = buckets[key]
+      local count = math.floor(w / blocks) + ((b <= (w % blocks)) and 1 or 0)
+      for _ = 1, count do
+        sub[#sub + 1] = key
+      end
+    end
+    shuffle(sub)
+    for _, sym in ipairs(sub) do
+      pool[#pool + 1] = sym
+    end
   end
   return pool
 end

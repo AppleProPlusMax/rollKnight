@@ -2,6 +2,7 @@ local Audio = {}
 Audio.__index = Audio
 
 local SAMPLE_RATE = 22050
+local MAX_POOL_PER_KEY = 4
 
 local function synthesizeTone(freqStart, freqEnd, waveType, duration, volume)
   if not love or not love.sound or not love.audio then
@@ -64,30 +65,31 @@ local function synthesizeSequence(notes, waveType, noteDur, volume)
 end
 
 function Audio.new()
-  local self = setmetatable({
+  return setmetatable({
     muted = false,
     bank = {},
+    pools = {},
+    lastPlayed = {},
   }, Audio)
-  return self
 end
 
 function Audio:init()
   if not love or not love.audio then return end
   self.bank.lever = synthesizeTone(200, 95, "sawtooth", 0.09, 0.22)
-  self.bank.tick = synthesizeTone(520, 420, "square", 0.025, 0.08)
+  self.bank.tick = synthesizeTone(520, 420, "square", 0.025, 0.07)
   self.bank.stop0 = synthesizeTone(140, 65, "triangle", 0.08, 0.24)
   self.bank.stop1 = synthesizeTone(165, 70, "triangle", 0.08, 0.24)
   self.bank.stop2 = synthesizeTone(190, 75, "triangle", 0.08, 0.24)
   self.bank.nudge = synthesizeTone(320, 480, "triangle", 0.06, 0.20)
   self.bank.match = synthesizeSequence({ 523.25, 659.25, 783.99 }, "triangle", 0.075, 0.22)
   self.bank.jackpot = synthesizeSequence({ 523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5, 1318.5 }, "square", 0.075, 0.18)
-  self.bank.hit = synthesizeTone(170, 75, "sawtooth", 0.05, 0.14)
-  self.bank.bow = synthesizeTone(620, 260, "triangle", 0.06, 0.14)
-  self.bank.magic = synthesizeTone(720, 1120, "sine", 0.09, 0.15)
-  self.bank.meteor = synthesizeTone(140, 38, "sawtooth", 0.25, 0.28)
-  self.bank.coin = synthesizeSequence({ 987.77, 1318.51 }, "sine", 0.055, 0.16)
+  self.bank.hit = synthesizeTone(170, 75, "sawtooth", 0.05, 0.12)
+  self.bank.bow = synthesizeTone(620, 260, "triangle", 0.06, 0.12)
+  self.bank.magic = synthesizeTone(720, 1120, "sine", 0.09, 0.13)
+  self.bank.meteor = synthesizeTone(140, 38, "sawtooth", 0.25, 0.26)
+  self.bank.coin = synthesizeSequence({ 987.77, 1318.51 }, "sine", 0.055, 0.14)
   self.bank.evolve = synthesizeSequence({ 440, 554.37, 659.25, 880 }, "triangle", 0.07, 0.22)
-  self.bank.hurt = synthesizeTone(140, 55, "sawtooth", 0.22, 0.28)
+  self.bank.hurt = synthesizeTone(140, 55, "sawtooth", 0.22, 0.26)
 end
 
 function Audio:toggleMute()
@@ -95,26 +97,49 @@ function Audio:toggleMute()
   return self.muted
 end
 
-function Audio:play(key)
+function Audio:play(key, minInterval)
   if self.muted then return end
-  local src = self.bank[key]
-  if not src then return end
-  local clone = src:clone()
-  clone:play()
+  local template = self.bank[key]
+  if not template then return end
+
+  local now = (love and love.timer) and love.timer.getTime() or 0
+  if minInterval and self.lastPlayed[key] and (now - self.lastPlayed[key]) < minInterval then
+    return
+  end
+  self.lastPlayed[key] = now
+
+  local pool = self.pools[key]
+  if not pool then
+    pool = {}
+    self.pools[key] = pool
+  end
+
+  for _, src in ipairs(pool) do
+    if not src:isPlaying() then
+      src:play()
+      return
+    end
+  end
+
+  if #pool < MAX_POOL_PER_KEY then
+    local clone = template:clone()
+    pool[#pool + 1] = clone
+    clone:play()
+  end
 end
 
-function Audio:playLever() self:play("lever") end
-function Audio:playReelTick() self:play("tick") end
-function Audio:playReelStop(col) self:play("stop" .. tostring((col or 0) % 3)) end
-function Audio:playNudge() self:play("nudge") end
-function Audio:playMatch() self:play("match") end
-function Audio:playJackpot() self:play("jackpot") end
-function Audio:playHit() self:play("hit") end
-function Audio:playBow() self:play("bow") end
-function Audio:playMagic() self:play("magic") end
-function Audio:playMeteor() self:play("meteor") end
-function Audio:playCoin() self:play("coin") end
-function Audio:playEvolve() self:play("evolve") end
-function Audio:playHurtBase() self:play("hurt") end
+function Audio:playLever() self:play("lever", 0.05) end
+function Audio:playReelTick() self:play("tick", 0.045) end
+function Audio:playReelStop(col) self:play("stop" .. tostring((col or 0) % 3), 0.03) end
+function Audio:playNudge() self:play("nudge", 0.04) end
+function Audio:playMatch() self:play("match", 0.08) end
+function Audio:playJackpot() self:play("jackpot", 0.15) end
+function Audio:playHit() self:play("hit", 0.055) end
+function Audio:playBow() self:play("bow", 0.055) end
+function Audio:playMagic() self:play("magic", 0.06) end
+function Audio:playMeteor() self:play("meteor", 0.12) end
+function Audio:playCoin() self:play("coin", 0.06) end
+function Audio:playEvolve() self:play("evolve", 0.1) end
+function Audio:playHurtBase() self:play("hurt", 0.12) end
 
 return Audio
