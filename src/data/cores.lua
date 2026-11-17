@@ -38,11 +38,32 @@ local CORES = {
     desc = { zh = "所有己方单位每第 5 次攻击都会召唤一颗火焰陨石轰炸敌阵", en = "Every 5th allied attack calls down a fiery AoE Meteor" },
   },
   {
+    id = "inferno_core",
+    name = { zh = "炼狱灼烧核心", en = "Inferno Core" },
+    color = Color.hex("#fb5607"),
+    badge = "BURN",
+    desc = { zh = "所有己方攻击附加【灼烧】效果，每秒造成持续火焰伤害", en = "All allied hits inflict BURN (fire DoT over 3s)" },
+  },
+  {
+    id = "frost_core",
+    name = { zh = "寒霜凝滞核心", en = "Frostbite Core" },
+    color = Color.hex("#38bdf8"),
+    badge = "CHILL",
+    desc = { zh = "法术与箭矢命中使敌人【冰缓】35%，大幅延缓推进速度", en = "Projectiles CHILL enemies, slowing movement & ASPD by 35%" },
+  },
+  {
+    id = "storm_core",
+    name = { zh = "雷霆暴击核心", en = "Storm Core" },
+    color = Color.hex("#fde047"),
+    badge = "BOLT",
+    desc = { zh = "全军暴击率 +15%，每次暴击释放连锁闪电劈向附近敌人", en = "+15% Crit globally; Crits unleash Chain Lightning" },
+  },
+  {
     id = "phalanx_banner",
     name = { zh = "铁壁战旗", en = "Phalanx Banner" },
     color = Color.hex("#5b9bd5"),
     badge = "SHLD",
-    desc = { zh = "全体前排/骑兵最大生命值 +40%，并反弹 25% 近战伤害", en = "Frontline & Cavalry gain +40% Max HP and 25% Thorns" },
+    desc = { zh = "全体前排/骑兵最大生命值 +40%，开战获得护盾并反弹 25% 伤害", en = "Frontline & Cavalry gain +40% Max HP, Shield & 25% Thorns" },
     onAcquire = function(state)
       for _, u in ipairs(state.roster) do
         if u.role == "frontline" or u.role == "vanguard" then
@@ -74,7 +95,7 @@ local CORES = {
     badge = "LUCK",
     desc = { zh = "永久提高转盘中【王冠】与【金币】的出现权重，并立即 +35 金币", en = "Boosts Crown & Gold reel weights; gain +35 Gold now" },
     onAcquire = function(state)
-      state.symbolWeights.crown = (state.symbolWeights.crown or 6) + 6
+      state.symbolWeights.crown = (state.symbolWeights.crown or 5) + 6
       state.symbolWeights.coin = (state.symbolWeights.coin or 16) + 8
       state.gold = state.gold + 35
       state:rebuildReels()

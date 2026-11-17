@@ -178,6 +178,48 @@ addTest("reel locking, jester wildcards, upgrade shop, and custom repositioning 
   assert(u.homeX == 620 and u.homeY == 260 and u.customPositioned == true)
 end)
 
+addTest("pity meter grants free wild spin, 3-star paragon absorb empowers, and burn/chill apply", function()
+  local state = StateMod.GameState.new(mockAudio)
+  state:setDifficulty("judgment")
+  state:startRun()
+  assert(state.hearts == 8 and state.gold == 52)
+
+  -- Pity meter at MAX_PITY makes spin free and places a wild in center cell (2,2)
+  state.pityCharge = StateMod.MAX_PITY
+  assert(state:currentSpinCost() == 0)
+  local goldBefore = state.gold
+  assert(state:spin() == true)
+  assert(state.gold == goldBefore)
+  for _ = 1, 25 do
+    state:update(0.05)
+  end
+  local centerSym = state.slot:getGrid()[2][2]
+  assert(centerSym == "crown" or centerSym == "jester", "Center symbol should be a wild after pity spin")
+
+  -- 3-star paragon over-absorb empowers ATK and MaxHP
+  local mainUnit = state.roster[1]
+  mainUnit.tier = 3
+  local atkBefore = mainUnit.atk
+  local hpBefore = mainUnit.maxHp
+  local fodder = StateMod.createUnitInstance("warrior")
+  state.roster[#state.roster + 1] = fodder
+  assert(state:absorbUnit(fodder.id, mainUnit.id) == true)
+  assert(mainUnit.atk > atkBefore and mainUnit.maxHp > hpBefore)
+
+  -- Burn and Chill status effects work in battle
+  local foe = Battle.spawnEnemyFromPlan({ type = "orc", delay = 0, scale = 1 })
+  local foeHp = foe.hp
+  state.enemies = { foe }
+  state.phase = "battle"
+  state.waveActive = true
+  state.wavePlan = { wave = 3, spawns = {} }
+  Battle.applyBurn(foe, 40, 2.0, mainUnit)
+  Battle.applyChill(foe, 2.0)
+  assert(foe.chillTimer == 2.0)
+  Battle.updateBattle(state, 0.55)
+  assert(foe.hp < foeHp)
+end)
+
 local function runAll()
   local passed = 0
   local failed = 0

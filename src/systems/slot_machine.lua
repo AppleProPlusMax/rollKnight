@@ -24,7 +24,6 @@ function M.resolveLineSymbols(a, b, c)
     elseif jesters == 3 then
       return { matchedSymbolId = "jester", isPureJackpot = false, crownCount = 0, jesterCount = 3 }
     else
-      -- Mix of crown & jester -> counts as Jackpot Crown!
       return { matchedSymbolId = "crown", isPureJackpot = true, crownCount = crowns, jesterCount = jesters }
     end
   end
@@ -82,6 +81,8 @@ function SlotMachine.new(weights)
     offsets = { 1, 1, 1 },
     locked = { false, false, false },
     spinning = false,
+    forceCenterWild = false,
+    leverPull = 0,
     reelSpinning = { false, false, false },
     reelTimers = { 0, 0, 0 },
     reelVisualShift = { 0, 0, 0 },
@@ -123,8 +124,28 @@ function SlotMachine:getGrid()
   return grid
 end
 
-function SlotMachine:startSpin()
+local function findWildOffset(strip)
+  local len = #strip
+  local candidates = {}
+  for i = 1, len do
+    local sym = strip[i]
+    if sym == "crown" or sym == "jester" then
+      -- To appear in row 2 (center), base offset is i - 1 wrapped
+      local base = ((i - 2) % len) + 1
+      candidates[#candidates + 1] = base
+    end
+  end
+  if #candidates > 0 then
+    return candidates[math.random(1, #candidates)]
+  end
+  return nil
+end
+
+function SlotMachine:startSpin(opts)
+  opts = opts or {}
   self.spinning = true
+  self.forceCenterWild = opts.forceCenterWild or false
+  self.leverPull = 1.0
   self.claimedLines = {}
   self.activeMatches = {}
   self.reelVisualShift = { 0, 0, 0 }
@@ -146,13 +167,13 @@ function SlotMachine:startSpin()
   end
 
   if not anySpinning then
-    -- Safety fallback if somehow all 3 were locked
     self.reelSpinning[3] = true
     self.reelTimers[3] = 0.36
   end
 end
 
 function SlotMachine:update(dt)
+  self.leverPull = math.max(0, self.leverPull - dt * 3.4)
   for col = 1, 3 do
     self.reelBounce[col] = math.max(0, self.reelBounce[col] - dt * 5)
   end
@@ -181,7 +202,12 @@ function SlotMachine:update(dt)
         self.reelSpinning[col] = false
         self.reelVisualShift[col] = 0
         self.reelBounce[col] = 1.0
-        self.offsets[col] = math.random(1, #self.strips[col])
+        if col == 2 and self.forceCenterWild then
+          local wildOff = findWildOffset(self.strips[2])
+          self.offsets[2] = wildOff or math.random(1, #self.strips[2])
+        else
+          self.offsets[col] = math.random(1, #self.strips[col])
+        end
         stoppedCols[#stoppedCols + 1] = col
       end
     end
@@ -189,6 +215,7 @@ function SlotMachine:update(dt)
 
   if not self.reelSpinning[1] and not self.reelSpinning[2] and not self.reelSpinning[3] then
     self.spinning = false
+    self.forceCenterWild = false
     self.locked = { false, false, false }
     return { finished = true, stoppedCols = stoppedCols, ticked = ticked }
   end

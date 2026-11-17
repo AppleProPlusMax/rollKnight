@@ -56,12 +56,18 @@ local function dispatchAction(hit)
   local id = hit.id
   if id == "start_run" then
     state:startRun()
+  elseif id == "set_diff" then
+    state:setDifficulty(hit.payload.diff)
   elseif id == "back_menu" then
     state.phase = "menu"
   elseif id == "toggle_lang" then
     i18n:toggle()
   elseif id == "toggle_shop" then
+    state.guideModal = false
     state.shopModal = not state.shopModal
+  elseif id == "toggle_guide" then
+    state.shopModal = false
+    state.guideModal = not state.guideModal
   elseif id == "buy_upgrade" then
     state:buyUpgrade(hit.payload.upgId)
   elseif id == "toggle_speed" then
@@ -139,20 +145,23 @@ function love.update(dt)
       state.shopModal = true
     elseif smokeFrames == 4 then
       state.shopModal = false
+      state.guideModal = true
+    elseif smokeFrames == 5 then
+      state.guideModal = false
       state:startWave()
       state:update(0.2)
-    elseif smokeFrames == 5 then
-      state:openCoreDraft()
     elseif smokeFrames == 6 then
+      state:openCoreDraft()
+    elseif smokeFrames == 7 then
       state.coreModal = nil
       state.classModal = {
         unitId = state.roster[1].id,
         choices = { require("src.data.units").ADVANCED_CLASSES.paladin, require("src.data.units").ADVANCED_CLASSES.berserker },
       }
-    elseif smokeFrames == 7 then
+    elseif smokeFrames == 8 then
       state.classModal = nil
       state.phase = "victory"
-    elseif smokeFrames >= 8 then
+    elseif smokeFrames >= 9 then
       print("SMOKE_OK")
       love.event.quit(0)
       return
@@ -202,7 +211,7 @@ function love.mousepressed(x, y, button)
     local h = hitboxes[i]
     local r = h.rect
     if pos.x >= r.x and pos.x <= r.x + r.w and pos.y >= r.y and pos.y <= r.y + r.h then
-      if h.id == "unit_arena" and not state.feedMode and not state.coreModal and not state.classModal and not state.shopModal then
+      if h.id == "unit_arena" and not state.feedMode and not state.coreModal and not state.classModal and not state.shopModal and not state.guideModal then
         dragState = {
           unitId = h.payload.unitId,
           startX = pos.x,
@@ -265,7 +274,11 @@ function love.keypressed(key)
   elseif key == "p" then
     state.paused = not state.paused
   elseif key == "u" and state.phase ~= "menu" then
+    state.guideModal = false
     state.shopModal = not state.shopModal
+  elseif key == "g" and state.phase ~= "menu" then
+    state.shopModal = false
+    state.guideModal = not state.guideModal
   elseif key == "1" then
     state:toggleReelLock(1)
   elseif key == "2" then
@@ -275,6 +288,8 @@ function love.keypressed(key)
   elseif key == "escape" then
     if state.shopModal then
       state.shopModal = false
+    elseif state.guideModal then
+      state.guideModal = false
     elseif state.feedMode then
       state.feedMode = false
       state.feedSacrificeId = nil

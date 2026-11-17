@@ -5,13 +5,13 @@ local M = {}
 
 M.ARENA = {
   x = 396,
-  y = 78,
+  y = 74,
   w = 866,
-  h = 552,
+  h = 556,
   castleX = 432,
   spawnX = 1236,
   rightBound = 1240,
-  minY = 118,
+  minY = 124,
   maxY = 594,
 }
 
@@ -48,17 +48,9 @@ end
 
 function M.computeSynergies(roster)
   local counts = { ironbound = 0, sylvan = 0, arcane = 0, undead = 0, royal = 0 }
-  local seen = {}
   for _, u in ipairs(roster) do
     if u.family and counts[u.family] ~= nil then
-      local key = u.baseId .. "_" .. (u.classId or "")
-      if not seen[key] then
-        seen[key] = true
-        counts[u.family] = counts[u.family] + 1
-      else
-        -- Duplicate units still count half or full? Counting each unit makes Slotbound-style stacking super clear!
-        counts[u.family] = counts[u.family] + 1
-      end
+      counts[u.family] = counts[u.family] + 1
     end
   end
   return {
@@ -76,7 +68,7 @@ function M.spawnEnemyFromPlan(entry)
   local scale = entry.scale or 1
   local maxHp = math.floor(tpl.hp * scale + 0.5)
   local atk = math.floor(tpl.atk * (1 + (scale - 1) * 0.55) + 0.5)
-  local y = M.ARENA.minY + 26 + math.random() * (M.ARENA.maxY - M.ARENA.minY - 52)
+  local y = M.ARENA.minY + 24 + math.random() * (M.ARENA.maxY - M.ARENA.minY - 48)
 
   return {
     id = M.genId("foe"),
@@ -100,6 +92,11 @@ function M.spawnEnemyFromPlan(entry)
     cooldown = 0.2 + math.random() * 0.3,
     hitFlash = 0,
     attackAnim = 0,
+    burnTimer = 0,
+    burnDps = 0,
+    burnTick = 0,
+    burnAttacker = nil,
+    chillTimer = 0,
   }
 end
 
@@ -120,6 +117,7 @@ function M.spawnSkeletonAlly(x, y, waveScale)
     homeY = y,
     hp = maxHp,
     maxHp = maxHp,
+    shield = 0,
     atk = atk,
     aspd = 1.2,
     range = 38,
@@ -189,6 +187,18 @@ local function handleEnemyDeath(state, enemy, killer)
 
   addFloatingText(state, enemy.x, enemy.y - 24, "+" .. tostring(totalGold) .. "g", Color.hex("#f6c945"), 1.05)
 
+  -- Pop flying coin icon
+  spawnVfx(state, {
+    kind = "coin_fly",
+    x = enemy.x,
+    y = enemy.y - 6,
+    vx = -40 + math.random() * 80,
+    vy = -75,
+    color = Color.hex("#facc15"),
+    life = 0.55,
+    maxLife = 0.55,
+  })
+
   local pCount = enemy.isBoss and 22 or 9
   for i = 1, pCount do
     local ang = math.random() * math.pi * 2
@@ -227,7 +237,20 @@ local function handleEnemyDeath(state, enemy, killer)
   end
 end
 
-local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback, synergies)
+function M.applyBurn(enemy, dps, duration, attacker)
+  if not enemy or enemy.hp <= 0 then return end
+  enemy.burnTimer = math.max(enemy.burnTimer or 0, duration)
+  enemy.burnDps = math.max(enemy.burnDps or 0, dps)
+  enemy.burnAttacker = attacker or enemy.burnAttacker
+end
+
+function M.applyChill(enemy, duration)
+  if not enemy or enemy.hp <= 0 then return end
+  enemy.chillTimer = math.max(enemy.chillTimer or 0, duration)
+end
+
+local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback, synergies, opts)
+  opts = opts or {}
   if not enemy or enemy.hp <= 0 then return false end
   local dmg = math.max(1, math.floor(rawDmg + 0.5))
   enemy.hp = enemy.hp - dmg
@@ -239,14 +262,16 @@ local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback, sy
     enemy.x = math.min(M.ARENA.rightBound, enemy.x + kb)
   end
 
-  addFloatingText(
-    state,
-    enemy.x + (math.random() - 0.5) * 14,
-    enemy.y - enemy.radius - 6,
-    isCrit and (tostring(dmg) .. "!") or tostring(dmg),
-    isCrit and Color.hex("#ffdf6b") or Color.hex("#ffffff"),
-    isCrit and 1.25 or 1.0
-  )
+  if not opts.silentText then
+    addFloatingText(
+      state,
+      enemy.x + (math.random() - 0.5) * 14,
+      enemy.y - enemy.radius - 6,
+      isCrit and (tostring(dmg) .. "!") or tostring(dmg),
+      opts.textColor or (isCrit and Color.hex("#ffdf6b") or Color.hex("#ffffff")),
+      isCrit and 1.25 or 1.0
+    )
+  end
 
   if attacker then
     local ls = (attacker.lifesteal or 0)
@@ -258,6 +283,34 @@ local function damageEnemy(state, enemy, rawDmg, attacker, isCrit, knockback, sy
     end
     if attacker.healOnHit and attacker.healOnHit > 0 then
       attacker.hp = math.min(attacker.maxHp, attacker.hp + attacker.healOnHit)
+    end
+    if not opts.isDot then
+      if state:hasCore("inferno_core") or attacker.attackType == "meteor" or attacker.classId == "dragonknight" then
+        M.applyBurn(enemy, math.max(6, dmg * 0.35), 3.0, attacker)
+      end
+      if (state:hasCore("frost_core") and opts.isProjectile) or attacker.attackType == "magic" then
+        M.applyChill(enemy, 2.2)
+      end
+    end
+  end
+
+  -- Storm Core: chain lightning on crits
+  if isCrit and not opts.noChain and state:hasCore("storm_core") then
+    for _, near in ipairs(state.enemies) do
+      if near ~= enemy and near.hp > 0 and dist(near, enemy) <= 135 then
+        damageEnemy(state, near, dmg * 0.55, attacker, false, 0, synergies, { noChain = true, textColor = Color.hex("#fde047") })
+        spawnVfx(state, {
+          kind = "beam",
+          x1 = enemy.x,
+          y1 = enemy.y,
+          x2 = near.x,
+          y2 = near.y,
+          color = Color.hex("#fde047"),
+          life = 0.18,
+          maxLife = 0.18,
+        })
+        break
+      end
     end
   end
 
@@ -272,6 +325,12 @@ local function damageAlly(state, ally, rawDmg, attacker, synergies)
   if not ally or ally.hp <= 0 then return end
   local reduction = (synergies and synergies.ironbound and ally.family == "ironbound") and 0.8 or 1.0
   local dmg = math.max(1, math.floor(rawDmg * reduction + 0.5))
+
+  if ally.shield and ally.shield > 0 then
+    local absorbed = math.min(ally.shield, dmg)
+    ally.shield = ally.shield - absorbed
+    dmg = dmg - absorbed
+  end
   ally.hp = ally.hp - dmg
   ally.hitFlash = 0.14
 
@@ -281,7 +340,7 @@ local function damageAlly(state, ally, rawDmg, attacker, synergies)
       thornsPct = thornsPct + 0.25
     end
     if thornsPct > 0 then
-      damageEnemy(state, attacker, dmg * thornsPct, ally, false, 0, synergies)
+      damageEnemy(state, attacker, math.max(1, rawDmg) * thornsPct, ally, false, 0, synergies)
     end
   end
 
@@ -313,7 +372,8 @@ local function performAllyAttack(state, unit, target, synergies)
   local royalMult = (synergies and synergies.royal) and 1.12 or 1.0
   local arcaneMult = (synergies and synergies.arcane and unit.family == "arcane") and 1.25 or 1.0
   local sylvanCrit = (synergies and synergies.sylvan and unit.family == "sylvan") and 0.15 or 0
-  local isCrit = math.random() < ((unit.critChance or 0) + sylvanCrit)
+  local stormCrit = state:hasCore("storm_core") and 0.15 or 0
+  local isCrit = math.random() < ((unit.critChance or 0) + sylvanCrit + stormCrit)
   local dmg = unit.atk * overdriveMult * royalMult * arcaneMult * (isCrit and 1.75 or 1.0)
 
   if (unit.meteorEvery and unit.meteorEvery > 0 and unit.attackCount % unit.meteorEvery == 0)
@@ -507,101 +567,120 @@ function M.updateBattle(state, dt)
     if foe.hp > 0 then
       foe.hitFlash = math.max(0, foe.hitFlash - dt)
       foe.attackAnim = math.max(0, foe.attackAnim - dt)
-      foe.cooldown = foe.cooldown - dt
 
-      local target = nil
-      local bestScore = math.huge
-      for _, ally in ipairs(allAllies) do
-        if ally.hp > 0 then
-          local d = dist(foe, ally)
-          if foe.targetsBackline and d <= foe.range then
-            if ally.x < bestScore then
-              bestScore = ally.x
-              target = ally
-            end
-          elseif not foe.targetsBackline then
-            if d < bestScore then
-              bestScore = d
-              target = ally
-            end
-          end
+      -- Status Effects: Chill & Burn
+      foe.chillTimer = math.max(0, (foe.chillTimer or 0) - dt)
+      local slowMult = (foe.chillTimer > 0) and 0.65 or 1.0
+      foe.cooldown = foe.cooldown - dt * slowMult
+
+      if foe.burnTimer and foe.burnTimer > 0 then
+        foe.burnTimer = foe.burnTimer - dt
+        foe.burnTick = (foe.burnTick or 0) + dt
+        if foe.burnTick >= 0.5 then
+          foe.burnTick = foe.burnTick - 0.5
+          damageEnemy(state, foe, foe.burnDps * 0.5, foe.burnAttacker, false, 0, synergies, {
+            isDot = true,
+            textColor = Color.hex("#fb923c"),
+          })
         end
       end
 
-      if not target and #allAllies > 0 then
-        local minD = math.huge
+      if foe.hp > 0 then
+        local target = nil
+        local bestScore = math.huge
         for _, ally in ipairs(allAllies) do
           if ally.hp > 0 then
             local d = dist(foe, ally)
-            if d < minD then
-              minD = d
-              target = ally
+            if foe.targetsBackline and d <= foe.range then
+              if ally.x < bestScore then
+                bestScore = ally.x
+                target = ally
+              end
+            elseif not foe.targetsBackline then
+              if d < bestScore then
+                bestScore = d
+                target = ally
+              end
             end
           end
         end
-      end
 
-      local dToTarget = target and dist(foe, target) or math.huge
-      local enteredArena = foe.x <= (M.ARENA.rightBound - 18)
-
-      if target and enteredArena and dToTarget <= foe.range then
-        if foe.cooldown <= 0 then
-          foe.cooldown = 1 / foe.aspd
-          foe.attackAnim = 0.18
-          if foe.projSpeed > 0 then
-            local denom = (dToTarget == 0) and 1 or dToTarget
-            local vx = ((target.x - foe.x) / denom) * foe.projSpeed
-            local vy = ((target.y - foe.y) / denom) * foe.projSpeed
-            state.projectiles[#state.projectiles + 1] = {
-              fromEnemy = true,
-              kind = "enemy",
-              x = foe.x - 10,
-              y = foe.y,
-              vx = vx,
-              vy = vy,
-              angle = math.atan2(vy, vx),
-              damage = foe.atk,
-              color = foe.accent,
-              radius = foe.isBoss and 7 or 4,
-              pierceLeft = 0,
-              hitIds = {},
-              life = 2.2,
-            }
-          else
-            damageAlly(state, target, foe.atk, foe, synergies)
-            spawnVfx(state, {
-              kind = "slash",
-              x = target.x,
-              y = target.y,
-              color = foe.accent,
-              life = 0.16,
-              maxLife = 0.16,
-              radius = 18,
-            })
+        if not target and #allAllies > 0 then
+          local minD = math.huge
+          for _, ally in ipairs(allAllies) do
+            if ally.hp > 0 then
+              local d = dist(foe, ally)
+              if d < minD then
+                minD = d
+                target = ally
+              end
+            end
           end
         end
-      else
-        local moveX = -foe.speed
-        local moveY = 0
-        if target and math.abs(target.x - foe.x) < 160 then
-          local dx = target.x - foe.x
-          local dy = target.y - foe.y
-          local len = math.sqrt(dx * dx + dy * dy)
-          if len == 0 then len = 1 end
-          moveX = (dx / len) * foe.speed
-          moveY = (dy / len) * foe.speed
-        end
-        foe.x = foe.x + moveX * dt
-        foe.y = math.max(M.ARENA.minY, math.min(M.ARENA.maxY, foe.y + moveY * dt))
-      end
 
-      if foe.x <= M.ARENA.castleX then
-        local heartLoss = foe.isBoss and 3 or 1
-        state.hearts = math.max(0, state.hearts - heartLoss)
-        state.screenShake = math.max(state.screenShake, 12)
-        state.audio:playHurtBase()
-        addFloatingText(state, M.ARENA.castleX + 18, foe.y, "-" .. tostring(heartLoss) .. " HP", Color.hex("#ff4d6d"), 1.35)
-        foe.hp = 0
+        local dToTarget = target and dist(foe, target) or math.huge
+        local enteredArena = foe.x <= (M.ARENA.rightBound - 18)
+
+        if target and enteredArena and dToTarget <= foe.range then
+          if foe.cooldown <= 0 then
+            foe.cooldown = 1 / foe.aspd
+            foe.attackAnim = 0.18
+            if foe.projSpeed > 0 then
+              local denom = (dToTarget == 0) and 1 or dToTarget
+              local vx = ((target.x - foe.x) / denom) * foe.projSpeed
+              local vy = ((target.y - foe.y) / denom) * foe.projSpeed
+              state.projectiles[#state.projectiles + 1] = {
+                fromEnemy = true,
+                kind = "enemy",
+                x = foe.x - 10,
+                y = foe.y,
+                vx = vx,
+                vy = vy,
+                angle = math.atan2(vy, vx),
+                damage = foe.atk,
+                color = foe.accent,
+                radius = foe.isBoss and 7 or 4,
+                pierceLeft = 0,
+                hitIds = {},
+                life = 2.2,
+              }
+            else
+              damageAlly(state, target, foe.atk, foe, synergies)
+              spawnVfx(state, {
+                kind = "slash",
+                x = target.x,
+                y = target.y,
+                color = foe.accent,
+                life = 0.16,
+                maxLife = 0.16,
+                radius = 18,
+              })
+            end
+          end
+        else
+          local effSpeed = foe.speed * slowMult
+          local moveX = -effSpeed
+          local moveY = 0
+          if target and math.abs(target.x - foe.x) < 160 then
+            local dx = target.x - foe.x
+            local dy = target.y - foe.y
+            local len = math.sqrt(dx * dx + dy * dy)
+            if len == 0 then len = 1 end
+            moveX = (dx / len) * effSpeed
+            moveY = (dy / len) * effSpeed
+          end
+          foe.x = foe.x + moveX * dt
+          foe.y = math.max(M.ARENA.minY, math.min(M.ARENA.maxY, foe.y + moveY * dt))
+        end
+
+        if foe.x <= M.ARENA.castleX then
+          local heartLoss = foe.isBoss and 3 or 1
+          state.hearts = math.max(0, state.hearts - heartLoss)
+          state.screenShake = math.max(state.screenShake, 12)
+          state.audio:playHurtBase()
+          addFloatingText(state, M.ARENA.castleX + 18, foe.y, "-" .. tostring(heartLoss) .. " HP", Color.hex("#ff4d6d"), 1.35)
+          foe.hp = 0
+        end
       end
     end
   end
@@ -631,7 +710,7 @@ function M.updateBattle(state, dt)
               for _, near in ipairs(state.enemies) do
                 if near.hp > 0 and dist(near, p) <= p.splash then
                   local mult = (near == foe) and 1 or 0.65
-                  damageEnemy(state, near, p.damage * mult, p.attacker, p.isCrit, 0, synergies)
+                  damageEnemy(state, near, p.damage * mult, p.attacker, p.isCrit, 0, synergies, { isProjectile = true })
                 end
               end
               spawnVfx(state, {
@@ -644,14 +723,14 @@ function M.updateBattle(state, dt)
                 maxLife = 0.22,
               })
             else
-              damageEnemy(state, foe, p.damage, p.attacker, p.isCrit, 0, synergies)
+              damageEnemy(state, foe, p.damage, p.attacker, p.isCrit, 0, synergies, { isProjectile = true })
             end
 
             if p.chainTargets and p.chainTargets > 0 then
               local chained = 0
               for _, near in ipairs(state.enemies) do
                 if near ~= foe and near.hp > 0 and dist(near, foe) <= 130 then
-                  damageEnemy(state, near, p.damage * 0.6, p.attacker, false, 0, synergies)
+                  damageEnemy(state, near, p.damage * 0.6, p.attacker, false, 0, synergies, { isProjectile = true })
                   spawnVfx(state, {
                     kind = "beam",
                     x1 = foe.x,
@@ -689,6 +768,7 @@ function M.updateBattle(state, dt)
       for _, foe in ipairs(state.enemies) do
         if foe.hp > 0 and dist(foe, m) <= m.radius then
           damageEnemy(state, foe, m.damage, m.attacker, true, 16, synergies)
+          M.applyBurn(foe, math.max(8, m.damage * 0.25), 3.0, m.attacker)
         end
       end
       spawnVfx(state, {

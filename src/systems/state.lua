@@ -8,6 +8,13 @@ local Color = require("src.utils.color")
 
 local M = {}
 M.LOCK_REEL_COST = 3
+M.MAX_PITY = 4
+
+M.DIFFICULTIES = {
+  normal   = { id = "normal",   enemyScale = 1.0,  startGold = 42, hearts = 10 },
+  hard     = { id = "hard",     enemyScale = 1.25, startGold = 46, hearts = 9 },
+  judgment = { id = "judgment", enemyScale = 1.55, startGold = 52, hearts = 8 },
+}
 
 function M.createUnitInstance(baseId, tierOverride, rarityOverride, prismBonus)
   local tpl = Units.BASE_UNITS[baseId]
@@ -30,6 +37,7 @@ function M.createUnitInstance(baseId, tierOverride, rarityOverride, prismBonus)
     xp = 0,
     hp = math.floor(tpl.hp * mult + 0.5),
     maxHp = math.floor(tpl.hp * mult + 0.5),
+    shield = 0,
     atk = math.floor(tpl.atk * mult + 0.5),
     aspd = math.floor(tpl.aspd * (1 + (rarity.statMult - 1) * 0.3) * 100 + 0.5) / 100,
     range = tpl.range,
@@ -88,6 +96,7 @@ function GameState.new(audio)
   return setmetatable({
     audio = audio,
     phase = "menu",
+    difficulty = "normal",
     wave = 1,
     waveActive = false,
     fastForward = false,
@@ -100,6 +109,8 @@ function GameState.new(audio)
     nudgesPerWave = 2,
     maxRoster = 8,
     prismBonus = 0,
+    pityCharge = 0,
+    spinMatchedThisTurn = false,
 
     baseSpinCost = 5,
     spinCostStep = 3,
@@ -123,6 +134,7 @@ function GameState.new(audio)
     coreModal = nil,
     classModal = nil,
     shopModal = false,
+    guideModal = false,
 
     selectedUnitId = nil,
     feedMode = false,
@@ -136,6 +148,8 @@ function GameState.new(audio)
     screenShake = 0,
     jackpotFlash = 0,
     bossBannerTimer = 0,
+    waveClearTimer = 0,
+    waveClearGold = 0,
   }, GameState)
 end
 
@@ -154,25 +168,41 @@ function GameState:rebuildReels()
   self.slot:rebuild(self.symbolWeights)
 end
 
+function GameState:isPitySpinReady()
+  return self.pityCharge >= M.MAX_PITY
+end
+
 function GameState:currentSpinCost()
+  if self:isPitySpinReady() then
+    return 0
+  end
   if self.freeFirstSpin and self.spinsThisWave == 0 then
     return 0
   end
   return self.baseSpinCost + self.spinsThisWave * self.spinCostStep
 end
 
+function GameState:setDifficulty(diffId)
+  if M.DIFFICULTIES[diffId] then
+    self.difficulty = diffId
+  end
+end
+
 function GameState:startRun()
+  local diff = M.DIFFICULTIES[self.difficulty] or M.DIFFICULTIES.normal
   self.phase = "spin"
   self.wave = 1
   self.waveActive = false
   self.paused = false
-  self.gold = 42
-  self.hearts = 10
-  self.maxHearts = 10
+  self.gold = diff.startGold
+  self.hearts = diff.hearts
+  self.maxHearts = diff.hearts
   self.nudgesPerWave = 2
   self.nudges = 2
   self.maxRoster = 8
   self.prismBonus = 0
+  self.pityCharge = 0
+  self.spinMatchedThisTurn = false
   self.baseSpinCost = 5
   self.spinCostStep = 3
   self.spinsThisWave = 0
@@ -198,15 +228,17 @@ function GameState:startRun()
   self.coreModal = nil
   self.classModal = nil
   self.shopModal = false
+  self.guideModal = false
   self.selectedUnitId = self.roster[1].id
   self.feedMode = false
   self.feedSacrificeId = nil
   self.totalKills = 0
-  self.wavePlan = Waves.buildWavePlan(1)
+  self.wavePlan = Waves.buildWavePlan(1, diff.enemyScale)
   self.waveElapsed = 0
   self.spawnCursor = 1
   self.jackpotFlash = 0
   self.bossBannerTimer = 0
+  self.waveClearTimer = 0
 end
 
 function GameState:canSpin()
@@ -214,22 +246,30 @@ function GameState:canSpin()
     and not self.coreModal
     and not self.classModal
     and not self.shopModal
+    and not self.guideModal
     and not self.slot.spinning
     and self.gold >= self:currentSpinCost()
 end
 
 function GameState:spin()
   if not self:canSpin() then return false end
-  self.gold = self.gold - self:currentSpinCost()
-  self.spinsThisWave = self.spinsThisWave + 1
-  self.slot:startSpin()
+  local isPity = self:isPitySpinReady()
+  local cost = self:currentSpinCost()
+  self.gold = self.gold - cost
+  if not isPity then
+    self.spinsThisWave = self.spinsThisWave + 1
+  else
+    self.pityCharge = 0
+  end
+  self.spinMatchedThisTurn = false
+  self.slot:startSpin({ forceCenterWild = isPity })
   self.audio:playLever()
   return true
 end
 
 function GameState:toggleReelLock(col)
   if (self.phase ~= "spin" and self.phase ~= "battle")
-     or self.coreModal or self.classModal or self.shopModal or self.slot.spinning then
+     or self.coreModal or self.classModal or self.shopModal or self.guideModal or self.slot.spinning then
     return false
   end
   if col < 1 or col > 3 then return false end
@@ -239,7 +279,6 @@ function GameState:toggleReelLock(col)
     self.audio:playNudge()
     return true
   end
-  -- Allow locking up to 2 columns so at least 1 spins
   local lockedCount = 0
   for i = 1, 3 do
     if self.slot.locked[i] then lockedCount = lockedCount + 1 end
@@ -255,22 +294,28 @@ end
 
 function GameState:nudgeReel(col, dir)
   if (self.phase ~= "spin" and self.phase ~= "battle")
-     or self.coreModal or self.classModal or self.shopModal or self.slot.spinning or self.nudges <= 0 then
+     or self.coreModal or self.classModal or self.shopModal or self.guideModal or self.slot.spinning or self.nudges <= 0 then
     return false
   end
   if self.slot:nudge(col, dir) then
     self.nudges = self.nudges - 1
     self.audio:playNudge()
-    self:applySlotMatches()
+    self:applySlotMatches(true)
     return true
   end
   return false
 end
 
-function GameState:applySlotMatches()
+function GameState:applySlotMatches(fromNudge)
   local matches = self.slot:collectNewMatches()
-  if #matches == 0 then return {} end
+  if #matches == 0 then
+    if not fromNudge and not self.spinMatchedThisTurn then
+      self.pityCharge = math.min(M.MAX_PITY, self.pityCharge + 1)
+    end
+    return {}
+  end
 
+  self.spinMatchedThisTurn = true
   local triggeredJackpot = false
   local jesterActive = self:hasCore("jester_trick")
 
@@ -403,7 +448,6 @@ function GameState:grantUnitXp(target, amount)
         text = "2-STAR!",
         color = Color.hex("#ffdf6b"), life = 1.15, maxLife = 1.15, scale = 1.25,
       }
-      -- Check if excess xp immediately hits tier 3
       if target.xp >= Units.xpNeededForTier(2) then
         self:grantUnitXp(target, 0)
       end
@@ -429,7 +473,7 @@ function GameState:absorbUnit(sacrificeId, targetId)
     if u.id == sacrificeId then sacIdx = i end
     if u.id == targetId then tgt = u end
   end
-  if not sacIdx or not tgt or tgt.tier >= 3 then return false end
+  if not sacIdx or not tgt then return false end
 
   local sac = self.roster[sacIdx]
   local sameTypeBonus = (sac.baseId == tgt.baseId) and 1 or 0
@@ -452,6 +496,22 @@ function GameState:absorbUnit(sacrificeId, targetId)
   self.selectedUnitId = tgt.id
   self.feedSacrificeId = nil
   self.feedMode = false
+
+  if tgt.tier >= 3 then
+    -- Paragon Over-Absorb: surplus units permanently empower 3-star champions!
+    local atkBoost = 1 + 0.12 * xpGain
+    local hpBoost = 1 + 0.14 * xpGain
+    tgt.atk = math.floor(tgt.atk * atkBoost + 0.5)
+    tgt.maxHp = math.floor(tgt.maxHp * hpBoost + 0.5)
+    tgt.hp = tgt.maxHp
+    self.audio:playEvolve()
+    self.floatingTexts[#self.floatingTexts + 1] = {
+      x = tgt.x, y = tgt.y - 24, vy = -30,
+      text = "PARAGON +" .. math.floor((atkBoost - 1) * 100) .. "%!",
+      color = Color.hex("#ffdf6b"), life = 1.0, maxLife = 1.0, scale = 1.15,
+    }
+    return true
+  end
 
   self:grantUnitXp(tgt, xpGain)
   self.floatingTexts[#self.floatingTexts + 1] = {
@@ -584,12 +644,13 @@ function GameState:chooseCore(coreId)
 end
 
 function GameState:startWave()
-  if self.phase ~= "spin" or self.coreModal or self.classModal or self.shopModal then return false end
+  if self.phase ~= "spin" or self.coreModal or self.classModal or self.shopModal or self.guideModal then return false end
+  local diff = M.DIFFICULTIES[self.difficulty] or M.DIFFICULTIES.normal
   self.phase = "battle"
   self.waveActive = true
   self.feedMode = false
   self.feedSacrificeId = nil
-  self.wavePlan = self.wavePlan or Waves.buildWavePlan(self.wave)
+  self.wavePlan = self.wavePlan or Waves.buildWavePlan(self.wave, diff.enemyScale)
   self.waveElapsed = 0
   self.spawnCursor = 1
   self.summons = {}
@@ -597,6 +658,17 @@ function GameState:startWave()
   self.meteors = {}
   Battle.assignFormationPositions(self.roster)
   self:refreshSynergies()
+
+  -- Grant battle shields to Paladin / Phalanx Banner frontliners
+  local hasPhalanx = self:hasCore("phalanx_banner")
+  for _, u in ipairs(self.roster) do
+    local shieldAmt = 0
+    if u.classId == "paladin" then shieldAmt = shieldAmt + math.floor(u.maxHp * 0.25) end
+    if hasPhalanx and (u.role == "frontline" or u.role == "vanguard") then
+      shieldAmt = shieldAmt + math.floor(u.maxHp * 0.2)
+    end
+    u.shield = shieldAmt
+  end
   return true
 end
 
@@ -610,6 +682,7 @@ function GameState:completeWave()
 
   for _, u in ipairs(self.roster) do
     u.hp = u.maxHp
+    u.shield = 0
     u.overdriveTimer = 0
     u.x = u.homeX
     u.y = u.homeY
@@ -623,12 +696,15 @@ function GameState:completeWave()
 
   local waveBonus = 14 + self.wave * 2 + (self:hasCore("castle_mason") and 12 or 0)
   self.gold = self.gold + waveBonus
+  self.waveClearGold = waveBonus
+  self.waveClearTimer = 2.2
 
+  local diff = M.DIFFICULTIES[self.difficulty] or M.DIFFICULTIES.normal
   local clearedWave = self.wave
   self.wave = self.wave + 1
   self.spinsThisWave = 0
   self.nudges = self.nudgesPerWave
-  self.wavePlan = Waves.buildWavePlan(self.wave)
+  self.wavePlan = Waves.buildWavePlan(self.wave, diff.enemyScale)
   self.phase = "spin"
   self:refreshSynergies()
 
@@ -642,6 +718,7 @@ function GameState:update(rawDt)
   self.screenShake = math.max(0, self.screenShake - dt * 28)
   self.jackpotFlash = math.max(0, self.jackpotFlash - dt * 1.6)
   self.bossBannerTimer = math.max(0, self.bossBannerTimer - dt)
+  self.waveClearTimer = math.max(0, self.waveClearTimer - dt)
 
   local keptTexts = {}
   for _, ft in ipairs(self.floatingTexts) do
@@ -659,23 +736,27 @@ function GameState:update(rawDt)
       v.y = v.y + v.vy * dt
       v.vx = v.vx * 0.94
       v.vy = v.vy * 0.94
+    elseif v.kind == "coin_fly" then
+      v.x = v.x + v.vx * dt
+      v.y = v.y + v.vy * dt
+      v.vy = v.vy + 220 * dt
     end
     if v.life > 0 then keptVfx[#keptVfx + 1] = v end
   end
   self.vfx = keptVfx
 
-  if self.paused or self.coreModal or self.classModal or self.shopModal then
+  if self.paused or self.coreModal or self.classModal or self.shopModal or self.guideModal then
     return
   end
 
-  if self.slot.spinning or self.slot.reelBounce[1] > 0 or self.slot.reelBounce[2] > 0 or self.slot.reelBounce[3] > 0 then
+  if self.slot.spinning or self.slot.leverPull > 0 or self.slot.reelBounce[1] > 0 or self.slot.reelBounce[2] > 0 or self.slot.reelBounce[3] > 0 then
     local res = self.slot:update(dt)
     if res.ticked then self.audio:playReelTick() end
     for _, col in ipairs(res.stoppedCols) do
       self.audio:playReelStop(col - 1)
     end
     if res.finished then
-      self:applySlotMatches()
+      self:applySlotMatches(false)
     end
   end
 

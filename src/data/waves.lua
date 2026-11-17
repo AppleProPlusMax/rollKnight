@@ -133,8 +133,9 @@ M.ENEMY_TYPES = {
   },
 }
 
-function M.buildWavePlan(wave)
-  local scale = 1 + (wave - 1) * 0.14 + math.max(0, wave - 8) * 0.06
+function M.buildWavePlan(wave, diffMult)
+  diffMult = diffMult or 1.0
+  local scale = (1 + (wave - 1) * 0.14 + math.max(0, wave - 8) * 0.06) * diffMult
   local spawns = {}
   local totalCount = 5 + math.floor(wave * 1.65)
 

@@ -113,6 +113,10 @@ function M.drawEnemySprite(foe, time)
     local scale = targetSize / iw
     if foe.hitFlash and foe.hitFlash > 0 then
       lg.setColor(1, 0.55, 0.55, 1)
+    elseif foe.chillTimer and foe.chillTimer > 0 then
+      lg.setColor(0.55, 0.88, 1.0, 1)
+    elseif foe.burnTimer and foe.burnTimer > 0 then
+      lg.setColor(1.0, 0.72, 0.45, 1)
     else
       lg.setColor(1, 1, 1, 1)
     end
@@ -120,6 +124,15 @@ function M.drawEnemySprite(foe, time)
   else
     lg.setColor(foe.color)
     lg.circle("fill", 0, 0, r)
+  end
+
+  if foe.burnTimer and foe.burnTimer > 0 then
+    lg.setColor(1, 0.52, 0.12, 0.85)
+    lg.circle("fill", r * 0.55, -r * 0.55 + math.sin(time * 12) * 2, 3.5)
+  end
+  if foe.chillTimer and foe.chillTimer > 0 then
+    lg.setColor(0.35, 0.85, 1, 0.9)
+    lg.polygon("fill", -r * 0.65, -r * 0.45, -r * 0.65 + 4, -r * 0.55, -r * 0.65, -r * 0.65, -r * 0.65 - 4, -r * 0.55)
   end
 
   lg.setLineWidth(1)
